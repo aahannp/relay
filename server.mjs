@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import tls from 'node:tls';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import readline from 'node:readline';
 import { WebSocketServer } from 'ws';
 import { db, load, changed, bus, pruneSpaces } from './lib/store.mjs';
@@ -575,6 +575,44 @@ route('GET', '/api/update', ({ query }) => U.status(query.get('force') === '1'))
 route('POST', '/api/update/download', ({ req }) => (notFromAgent(req, 'download updates'), U.autoOn() ? U.prepare() : U.download()));
 route('POST', '/api/update/install', ({ req }) => (notFromAgent(req, 'install updates'), U.restart()));
 route('POST', '/api/update/show', () => U.reveal());
+
+// Resources: CPU and memory right now for Relay's whole process tree (in the Mac app that includes Electron's
+// GPU, renderer and helpers), each running pane's tree, and the rest as Relay itself. Settings polls it.
+route('GET', '/api/resources', async ({ req }) => {
+  notFromAgent(req, "read Relay's resource use");
+  const ps = await new Promise((resolve, reject) => execFile('ps', ['-axo', 'pid=,ppid=,%cpu=,rss='], (e, out) => (e ? reject(e) : resolve(out))));
+  const usage = processTree(ps);
+  const round = x => ({ cpu: Math.round(x.cpu * 10) / 10, mem: x.mem });
+  const total = usage(process.pid);
+  const agents = [...S.sessions.values()].filter(s => !s.exited).map(s => ({ id: s.id, name: S.info(s).name, ...usage(s.pty.pid) }));
+  const sum = key => agents.reduce((n, a) => n + a[key], 0);
+  return {
+    total: round(total),
+    relay: round({ cpu: Math.max(0, total.cpu - sum('cpu')), mem: Math.max(0, total.mem - sum('mem')) }),
+    agents: agents.map(a => ({ ...a, ...round(a) })),
+  };
+});
+// `ps -o pid=,ppid=,%cpu=,rss=` output -> usage(pid): { cpu, mem in bytes } summed over that process and everything under it.
+export function processTree(text) {
+  const procs = new Map();
+  const kids = new Map();
+  for (const line of text.trim().split('\n')) {
+    const [pid, ppid, cpu, rss] = line.trim().split(/\s+/).map(Number);
+    procs.set(pid, { cpu, mem: rss * 1024 });
+    if (pid !== ppid) kids.set(ppid, [...(kids.get(ppid) ?? []), pid]);
+  }
+  return root => {
+    const total = { cpu: 0, mem: 0 };
+    for (const stack = [root]; stack.length;) {
+      const pid = stack.pop();
+      if (!procs.has(pid)) continue;
+      total.cpu += procs.get(pid).cpu;
+      total.mem += procs.get(pid).mem;
+      stack.push(...(kids.get(pid) ?? []));
+    }
+    return total;
+  };
+}
 
 // The team: named specialists with their own instructions and model
 route('GET', '/api/specialists', () => T.list());

@@ -7,7 +7,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { start } from './server.mjs';
+import { start, processTree } from './server.mjs';
 import { createWorktree } from './lib/git.mjs';
 import { db, bus, migrate } from './lib/store.mjs';
 import * as T from './lib/team.mjs';
@@ -365,6 +365,11 @@ try {
     assert.match(meterView({ ...m, used: 160_000, effective: 200_000 }).details, /Effective window: 200K[^]*model's is 1M/, 'an auto-compact window smaller than the model\'s is the one that counts');
     assert.deepEqual([meterView({ ...m, cost: 0, unpriced: 3 }).cost, meterView({ ...m, cost: 0 }).cost], ['', '$0.00'], 'no cost shown when nothing could be priced');
   }
+
+  // Resources: a process's usage is its own plus every descendant's, and nothing outside that subtree
+  const tree = processTree(' 10 1 5.0 100\n 11 10 2.5 50\n 12 11 1.0 10\n 13 10 0.5 20\n 20 1 9.0 999\n');
+  assert.deepEqual(tree(10), { cpu: 9, mem: 180 * 1024 }, 'the whole subtree, rss KB as bytes');
+  assert.deepEqual([tree(11), tree(99)], [{ cpu: 3.5, mem: 60 * 1024 }, { cpu: 0, mem: 0 }], 'a branch, and a pid that has gone');
 
   // Spend: one API response is several lines sharing message.id, a clone copies them into another file, and 1h cache writes cost more
   const close = (a, b, what) => assert.ok(Math.abs(a - b) < 1e-9, `${what}: ${a} vs ${b}`);

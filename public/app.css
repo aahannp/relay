@@ -798,6 +798,8 @@ select.input.art-chat-model { width: auto; padding: 4px 8px; font-size: 12px; bo
 .agent-row { display: flex; align-items: center; gap: 11px; padding: 10px 12px; border: 1px solid var(--hair); border-radius: 13px; background: color-mix(in srgb, var(--panel) 50%, transparent); }
 .codeblock { position: relative; background: color-mix(in srgb, var(--bg) 80%, transparent); border: 1px solid var(--hair-strong); border-radius: 12px; padding: 13px 46px 13px 15px; font: 12px/1.65 var(--mono); white-space: pre-wrap; word-break: break-all; }
 .codeblock .icon-btn { position: absolute; top: 9px; right: 9px; }
+.resources .row { padding: 6px 0; border-top: 1px solid var(--hair); font-variant-numeric: tabular-nums; }
+.resources .row span:not(.grow) { min-width: 84px; text-align: right; color: var(--dim); }
 .keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px 22px; }
 .keys div { display: flex; justify-content: space-between; align-items: center; gap: 10px; color: var(--dim); }
 
