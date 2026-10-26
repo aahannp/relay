@@ -39,6 +39,7 @@ let TOKEN = '';
 let COOKIE = '';
 let LOCAL = new Set();
 let VOICE_HELPER = null;
+let VSCODE = false;
 let voice = null;
 
 // ---------- Security ----------
@@ -133,7 +134,7 @@ function route(method, pattern, handler) {
 
 route('GET', '/api/info', () => ({
   url: S.serverUrl(), token: TOKEN, mcpUrl: `${S.serverUrl()}/mcp`,
-  electron: Boolean(process.versions.electron), voice: Boolean(VOICE_HELPER), home: os.homedir(), version: U.current(), debug: DEBUG,
+  electron: Boolean(process.versions.electron) && !VSCODE, vscode: VSCODE, voice: Boolean(VOICE_HELPER), home: os.homedir(), version: U.current(), debug: DEBUG,
 }));
 
 // Projects
@@ -941,7 +942,9 @@ async function respond(req, res) {
     if (url.pathname === '/' && url.searchParams.has('t')) { // trade the link's secret for a cookie, then drop it from the address bar
       if (req.auth?.kind !== 'ui') return res.writeHead(302, { location: '/' }).end();
       url.searchParams.delete('t'); // a new window's ?project= stays
-      return res.writeHead(302, { location: `/${url.search}`, 'set-cookie': `${COOKIE}=${TOKEN}; HttpOnly; SameSite=Strict; Path=/` }).end();
+      // VS Code shows the page in an iframe inside its own window, where a SameSite=Strict cookie is never sent.
+      const site = VSCODE ? 'SameSite=None; Secure; Partitioned' : 'SameSite=Strict';
+      return res.writeHead(302, { location: `/${url.search}`, 'set-cookie': `${COOKIE}=${TOKEN}; HttpOnly; ${site}; Path=/` }).end();
     }
     if (url.pathname === '/' && req.auth?.kind !== 'ui') return res.writeHead(401, { 'content-type': 'text/html' }).end(LOCKED_PAGE);
     const file = req.method === 'GET' && staticPath(url.pathname);
@@ -1026,9 +1029,10 @@ function trustTheMac() {
   } catch {} // older Node: its own roots only
 }
 
-// Starts Relay. The Mac app calls this with its own data folder; `npm start` runs it directly.
-export async function start({ port = Number(process.env.PORT) || 4747, dataDir = path.join(DIR, 'data'), voiceHelper } = {}) {
+// Starts Relay. The Mac app calls this with its own data folder, the VS Code extension with vscode: true; `npm start` runs it directly.
+export async function start({ port = Number(process.env.PORT) || 4747, dataDir = path.join(DIR, 'data'), voiceHelper, vscode = false } = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
+  VSCODE = vscode;
   trustTheMac();
   load(dataDir);
   S.forgetRunningChats();

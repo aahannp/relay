@@ -10,6 +10,7 @@
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
     "start": "node server.mjs",
     "check": "node check.mjs",
+    "vsix": "node vscode/build.mjs",
     "app": "electron .",
     "build:native": "mkdir -p native/build && swiftc -O -target \"$(uname -m)-apple-macos12\" native/listen.swift -o native/build/desk-listen -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker native/Info.plist",
     "build:art": "electron build/art/render.mjs",

@@ -507,6 +507,10 @@ command('New space (add a project folder)', () => addProject(), { icon: 'folder'
 (async () => {
   applyTheme();
   [state.info, state.agents] = await Promise.all([api('GET', '/api/info'), api('GET', '/api/agents')]);
+  if (state.info.vscode) { // the Mac app's updater means nothing here, and VS Code's frame blocks popups: it opens links itself
+    $('verPill').hidden = true;
+    window.open = url => (parent.postMessage({ open: String(url) }, '*'), null);
+  }
   await Promise.all(Object.values(loaders).map(load => load()));
   pickProject();
   applyTheme();
