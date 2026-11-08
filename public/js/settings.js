@@ -13,13 +13,36 @@ const PERMISSIONS = [
 const LANGUAGES = [['en-US', 'English (US)'], ['en-GB', 'English (UK)'], ['en-IN', 'English (India)'], ['hi-IN', 'Hindi'],
   ['es-ES', 'Spanish'], ['fr-FR', 'French'], ['de-DE', 'German'], ['pt-BR', 'Portuguese (Brazil)'], ['ja-JP', 'Japanese']];
 let root;
+let resources; // the Resources block: kept across render() so polling only redraws it
+let timer = 0;
 
 export function mount(el) {
   root = h('div', { class: 'settings' });
+  resources = h('div', { class: 'resources' }, h('p', { class: 'muted' }, 'Measuring…'));
   el.append(root);
   for (const kind of ['settings', 'specialists']) on(kind, () => actions.currentView() === 'settings' && render());
+  addEventListener('focus', poll);
+  addEventListener('blur', poll);
 }
-export const show = () => render();
+export const show = () => (render(), poll());
+export const hide = () => clearTimeout(timer); // called while Settings is still the current view
+
+// Every 3s, only while Settings is on screen and the window has focus, so Relay does no extra work when idle.
+function poll() {
+  clearTimeout(timer);
+  if (actions.currentView() !== 'settings' || !document.hasFocus()) return;
+  timer = setTimeout(poll, 3000);
+  api('GET', '/api/resources').then(showResources, () => {});
+}
+
+function showResources(r) {
+  const mb = bytes => `${Math.round(bytes / 1048576)} MB`;
+  const row = (name, x) => h('div', { class: 'row' }, h('span', { class: 'grow' }, name), h('span', {}, `${x.cpu.toFixed(1)}% CPU`), h('span', {}, mb(x.mem)));
+  resources.replaceChildren(
+    h('p', {}, `In total: ${r.total.cpu.toFixed(1)}% CPU and ${mb(r.total.mem)} of memory.`),
+    row('Relay app', r.relay),
+    ...r.agents.map(a => row(a.name, a)));
+}
 
 const set = patch => actions.setSetting(patch);
 const setting = (title, text, control) => h('div', { class: 'setting' }, h('div', { class: 'label' }, h('b', {}, title), h('span', {}, text)), control);
@@ -121,13 +144,15 @@ function render() {
       h('div', { class: 'codeblock' }, mcpCommand, h('button', { class: 'icon-btn', title: 'Copy', onClick: () => copy(mcpCommand) }, icon('copy', 14))),
       h('p', { class: 'muted', style: { margin: '10px 0 0', fontSize: '12px' } }, 'The command includes this Relay\'s secret, so don\'t share it.')),
 
+    section('Resources', 'What Relay uses right now: the app itself and each open pane. 100% CPU is one core.', resources),
+
     section('Keyboard', null, h('div', { class: 'keys' }, [
       ['Command palette', '⌘K'], ['Voice input', '⌘⇧M'], ['Switch views', '⌘1 – ⌘7'], ['Save file', '⌘S'],
       ['Maximise a pane', 'double-click its header'], ['Close dialogs', 'Esc'],
     ].map(([what, keys]) => h('div', {}, what, h('kbd', {}, keys))))),
 
     section('About', null, h('div', { class: 'row' }, h('p', { class: 'muted grow', style: { margin: 0 } },
-      `Relay ${state.info.version ? `v${state.info.version} ` : ''}${state.info.electron ? 'Mac app' : 'in the browser'} · server ${state.info.url}`),
+      `Relay ${state.info.version ? `v${state.info.version} ` : ''}${state.info.vscode ? 'in VS Code' : state.info.electron ? 'Mac app' : 'in the browser'} · server ${state.info.url}`),
     h('button', { class: 'btn sm', onClick: () => openUpdates() }, icon('refresh', 13), 'Check for updates')),
     setting('Update automatically', s.autoUpdate !== false
       ? 'On: the Mac app downloads new versions in the background, checks them, and installs them when you quit Relay or click Restart to update. It never restarts on its own.'

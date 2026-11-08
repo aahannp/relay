@@ -7,6 +7,7 @@ let selected = null; // worktree path
 let file = null;
 let diff = null;
 let sideBySide = true;
+let ready = false; // loaded since the project changed, so selected is real
 let listEl, actionsEl, filesEl, headEl, hostEl;
 
 export function mount(el) {
@@ -16,12 +17,23 @@ export function mount(el) {
   headEl = h('div', { class: 'diff-head' });
   hostEl = h('div', { class: 'diff-host' });
   el.append(h('div', { class: 'review' }, listEl, h('div', { class: 'wt-files' }, actionsEl, filesEl), h('div', {}, headEl, hostEl)));
-  on('project', () => { selected = null; file = null; if (actions.currentView() === 'review') load(); });
+  on('project', () => { selected = null; file = null; ready = false; if (actions.currentView() === 'review') load(); });
   for (const kind of ['tasks', 'projects']) on(kind, () => actions.currentView() === 'review' && load());
 }
 
 export const show = () => load();
 export const toolbar = () => [h('button', { class: 'btn sm', onClick: () => load() }, icon('refresh', 13), 'Refresh')];
+// Back and forward (app.js): the worktree and the file in its diff. Nothing until the first load picks one.
+export const place = () => (ready ? { worktree: selected, file } : null);
+export async function goTo(p) {
+  selected = p.worktree;
+  file = p.file;
+  await load();
+  if (selected !== p.worktree) return false; // it was merged or discarded
+  const f = item()?.files.find(x => x.path === p.file) ?? item()?.files[0];
+  if (f) await showDiff(f);
+  else emptyDiff();
+}
 
 actions.reviewWorktree = path => {
   selected = path;
@@ -36,6 +48,7 @@ const load = guard(async () => {
     selected = (data.items.find(i => !i.main && i.files.length) || data.items.find(i => i.files.length) || data.items[0])?.path ?? null;
     file = null;
   }
+  ready = true;
   render();
 });
 
@@ -53,6 +66,7 @@ function render() {
     headEl.replaceChildren();
     diff?.setModel(null); // or the last project's diff stays on screen
     hostEl.querySelector('.pane-empty')?.remove();
+    actions.notePlace();
     return;
   }
   const agentItems = data.items.filter(i => !i.main);
@@ -68,6 +82,7 @@ function render() {
     if (first) showDiff(first);
     else emptyDiff();
   }
+  actions.notePlace();
 }
 
 function card(i) {
@@ -118,6 +133,7 @@ const languageFor = (monaco, path) => monaco.languages.getLanguages().find(l => 
 const showDiff = guard(async f => {
   file = f.path;
   renderFiles();
+  actions.notePlace();
   const monaco = await loadMonaco();
   const { original, modified } = await api('GET', `/api/review/file?worktree=${encodeURIComponent(selected)}&file=${encodeURIComponent(f.path)}`);
   hostEl.querySelector('.pane-empty')?.remove();

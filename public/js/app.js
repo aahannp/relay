@@ -1,6 +1,7 @@
 // The app shell: navigation, projects, live updates from the server, the command palette and shortcuts.
 import { state, api, h, icon, avatar, on, emit, toast, guard, actions, command, commands, menu, modal, askText, confirmDialog, ago, baseName, ltr, projectSessions, projectTasks, projectChats, gridSessions, openSpaces, spaceSummary, chatTitle, DRAG, STATUS_LABEL } from './ui.js';
 import { THEMES, applyTheme } from './themes.js';
+import { createHistory } from './history.js';
 import * as agents from './agents.js';
 import * as board from './board.js';
 import * as files from './files.js';
@@ -118,9 +119,78 @@ function showView(id) {
   $('viewHint').textContent = view.hint;
   renderToolbar();
   view.module.show?.();
+  notePlace();
 }
 actions.showView = showView;
 actions.currentView = () => current;
+
+// ---------- Back and forward ----------
+// Where you are: the open spaces, the view, and what the view has open (its place(); null while it's still loading).
+const nav = createHistory();
+const here = () => {
+  const view = VIEWS.find(v => v.id === current);
+  const detail = view.module.place ? view.module.place() : {};
+  return detail && { spaces: openSpaces(), view: current, ...detail };
+};
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const exists = p => p.spaces.every(path => state.projects.some(x => x.path === path)) && (VIEWS.find(v => v.id === p.view)?.module.has?.(p) ?? true);
+let restoring = false;
+let noting = false;
+// Views call this when what they show changes. One move often touches several (focusSession shows Agents, then the
+// pane), so it records once, after the move, and never while going back or forward.
+function notePlace() {
+  if (restoring || noting) return;
+  noting = true;
+  queueMicrotask(() => {
+    noting = false;
+    const p = !restoring && current && here();
+    if (p) nav.record(p);
+    renderNav();
+  });
+}
+actions.notePlace = notePlace;
+
+async function restore(p) {
+  if (!same(p.spaces, openSpaces())) showSpaces(p.spaces);
+  showView(p.view); // first, so the editor lays out before it scrolls to the line
+  return (await VIEWS.find(v => v.id === p.view).module.goTo?.(p)) !== false;
+}
+async function travel(dir) {
+  if (restoring) return;
+  restoring = true;
+  try {
+    // A view's goTo() returns false when the place turns out to be gone (a deleted file): try the next one.
+    const start = nav.mark();
+    const from = here();
+    let tried = false;
+    for (let p; (p = nav.go(dir, exists));) {
+      tried = true;
+      if (await restore(p)) return;
+    }
+    // None could be restored: back to where we were, with the history as it was.
+    if (tried) {
+      nav.reset(start);
+      if (from) await restore(from);
+    }
+  } finally {
+    restoring = false;
+    renderNav();
+  }
+}
+const backBtn = h('button', { class: 'icon-btn', 'aria-label': 'Back', title: 'Back (⌘[)', onClick: () => travel(-1) }, icon('arrowLeft', 16));
+const fwdBtn = h('button', { class: 'icon-btn', 'aria-label': 'Forward', title: 'Forward (⌘])', onClick: () => travel(1) }, icon('arrowRight', 16));
+function renderNav() {
+  backBtn.disabled = !nav.can(-1, exists);
+  fwdBtn.disabled = !nav.can(1, exists);
+}
+document.querySelector('.topbar .crumbs').before(h('div', { class: 'nav-history' }, backBtn, fwdBtn));
+// Mouse buttons 4 and 5, and a three-finger trackpad swipe (electron/main.mjs passes it on).
+addEventListener('mouseup', e => (e.button === 3 || e.button === 4) && (e.preventDefault(), travel(e.button === 3 ? -1 : 1)));
+addEventListener('relay:swipe', e => travel(e.detail === 'left' ? -1 : 1));
+on('sessions', renderNav); // a closed pane or a deleted task can leave nowhere to go
+on('tasks', renderNav);
+on('projects', renderNav);
+on('artifacts', renderNav);
 
 function renderToolbar() {
   const view = VIEWS.find(v => v.id === current);
@@ -371,6 +441,7 @@ function showSpaces(list) {
   state.settings.openSpaces = open; // now, so the grid redraws once with the new project; the server keeps it
   if (before !== state.project) emit('project');
   actions.setSetting({ lastProject: state.project, openSpaces: open }); // re-renders the sidebar too
+  notePlace();
 }
 actions.showSpaces = showSpaces;
 const switchProject = path => showSpaces([path]); // a plain click on a space: just that one
@@ -495,6 +566,8 @@ document.addEventListener('keydown', e => {
   if (mod && !e.shiftKey && key === 'k') { e.preventDefault(); e.stopPropagation(); openPalette(); }
   else if (mod && e.shiftKey && key === 'm') { e.preventDefault(); e.stopPropagation(); actions.toggleVoice(); }
   else if (mod && !e.shiftKey && !e.altKey && key === 'b') { e.preventDefault(); e.stopPropagation(); toggleSidebar(); }
+  // ⌘[ and ⌘] (not Ctrl: Ctrl+[ is Escape in a terminal), except in the editor, where they indent.
+  else if (e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && (key === '[' || key === ']') && !e.target.closest?.('.monaco-editor')) { e.preventDefault(); e.stopPropagation(); travel(key === '[' ? -1 : 1); }
   else if (mod && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) { e.preventDefault(); e.stopPropagation(); showView(VIEWS[Number(e.key) - 1].id); }
 }, true);
 
@@ -507,6 +580,10 @@ command('New space (add a project folder)', () => addProject(), { icon: 'folder'
 (async () => {
   applyTheme();
   [state.info, state.agents] = await Promise.all([api('GET', '/api/info'), api('GET', '/api/agents')]);
+  if (state.info.vscode) { // the Mac app's updater means nothing here, and VS Code's frame blocks popups: it opens links itself
+    $('verPill').hidden = true;
+    window.open = url => (parent.postMessage({ open: String(url) }, '*'), null);
+  }
   await Promise.all(Object.values(loaders).map(load => load()));
   pickProject();
   applyTheme();

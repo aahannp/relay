@@ -30,6 +30,10 @@ export const toolbar = () => [
   h('button', { class: 'btn', onClick: () => fromTaskNotes(), title: 'Bring tasks over from the Task Notes app' }, icon('clipboard', 15), 'Task Notes'),
   h('button', { class: 'btn primary', onClick: () => newTask() }, icon('plus', 15), 'New task')];
 export const show = () => render();
+// Back and forward (app.js): the task open in the drawer, if any.
+export const place = () => ({ task: openId });
+export const has = p => !p.task || state.tasks.some(t => t.id === p.task);
+export const goTo = p => (p.task ? openTask(p.task) : closeDrawer());
 
 function render() {
   if (!boardEl) return;
@@ -216,6 +220,7 @@ function closeDrawer() {
   drawer = null;
   openId = null;
   boardEl?.querySelectorAll('.card.selected').forEach(c => c.classList.remove('selected'));
+  actions.notePlace();
 }
 
 function renderDrawer() {

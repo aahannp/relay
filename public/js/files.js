@@ -8,6 +8,7 @@ const listings = new Map(); // folder -> its entries
 const tabs = []; // { path, model, saved }
 let active = null;
 let editor = null;
+let opening = null; // the file on its way in, so history doesn't record the one it replaces first
 let treeEl, tabsEl, hostEl, statusEl, rootSelect, emptyEl;
 
 export function mount(el) {
@@ -100,27 +101,49 @@ function toggle(dir) {
 // ---------- Editor ----------
 const dirty = tab => tab.model.getAlternativeVersionId() !== tab.saved;
 
-const open = guard(async path => {
-  const monaco = await loadMonaco();
-  if (!editor) {
-    editor = monaco.editor.create(hostEl, editorOptions());
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => save());
-    editor.onDidChangeCursorPosition(renderStatus);
+async function load(path) {
+  opening = path;
+  try {
+    const monaco = await loadMonaco();
+    if (!editor) {
+      editor = monaco.editor.create(hostEl, editorOptions());
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => save());
+      // A reload's setValue puts the cursor on line 1 (ContentFlush): that isn't the user going anywhere.
+      editor.onDidChangeCursorPosition(e => { renderStatus(); if (e.reason !== monaco.editor.CursorChangeReason.ContentFlush) actions.notePlace(); });
+    }
+    let tab = tabs.find(t => t.path === path);
+    if (!tab) {
+      const { content } = await api('GET', `/api/fs/file?path=${encodeURIComponent(path)}`);
+      const model = monaco.editor.createModel(content, undefined, monaco.Uri.file(path));
+      tab = { path, model, saved: model.getAlternativeVersionId() };
+      model.onDidChangeContent(renderTabs);
+      tabs.push(tab);
+    }
+    activate(tab);
+  } finally {
+    if (opening === path) opening = null;
   }
-  let tab = tabs.find(t => t.path === path);
-  if (!tab) {
-    const { content } = await api('GET', `/api/fs/file?path=${encodeURIComponent(path)}`);
-    const model = monaco.editor.createModel(content, undefined, monaco.Uri.file(path));
-    tab = { path, model, saved: model.getAlternativeVersionId() };
-    model.onDidChangeContent(renderTabs);
-    tabs.push(tab);
-  }
-  activate(tab);
-});
+}
+const open = guard(load);
 actions.openFile = path => {
   actions.showView('files');
   open(path);
 };
+
+// Back and forward (app.js): the file and the cursor's line. A jump of more than 10 lines is a new step (history.js).
+export const place = () => (opening ? { file: opening } : { file: active?.path ?? null, line: active ? editor.getPosition()?.lineNumber : null });
+export async function goTo(p) {
+  if (!p.file) return activate(null);
+  try {
+    await load(p.file);
+  } catch {
+    return false; // deleted since
+  }
+  if (p.line) {
+    editor.setPosition({ lineNumber: p.line, column: 1 });
+    editor.revealLineInCenter(p.line);
+  }
+}
 
 function activate(tab) {
   active = tab;
@@ -131,6 +154,7 @@ function activate(tab) {
   renderTree();
   actions.renderToolbar?.();
   if (tab) editor.focus();
+  actions.notePlace();
 }
 
 const save = guard(async () => {
@@ -175,7 +199,9 @@ async function reloadUnchanged() {
     if (dirty(tab)) continue;
     const res = await api('GET', `/api/fs/file?path=${encodeURIComponent(tab.path)}`).catch(() => null);
     if (res && res.content !== tab.model.getValue()) {
+      const view = tab === active && editor.saveViewState(); // setValue loses the cursor and scroll
       tab.model.setValue(res.content);
+      if (view) editor.restoreViewState(view);
       tab.saved = tab.model.getAlternativeVersionId();
     }
   }

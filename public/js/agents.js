@@ -607,7 +607,12 @@ function renderHead(p) {
 function setFocus(id) {
   focusedId = id;
   for (const p of panes.values()) p.el.classList.toggle('focus', p.id === id);
+  actions.notePlace();
 }
+// Back and forward (app.js): the focused pane.
+export const place = () => ({ pane: panes.get(focusedId)?.docked ? null : focusedId }); // a docked pane is Artifacts'
+export const has = p => !p.pane || panes.has(p.pane);
+export const goTo = p => p.pane && focusSession(p.pane);
 actions.focusedSession = () => (panes.get(focusedId)?.kind === 'term' ? focusedId : null);
 
 // Shows a session's pane inside another view's element (the Artifacts view's side chat), made there if it's new.
