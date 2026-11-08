@@ -48,6 +48,15 @@ export function mount(el) {
   on('settings', () => renderChat());
 }
 export const show = () => render();
+// Back and forward (app.js): the page open.
+export const place = () => ({ page: selected });
+export const has = p => !p.page || state.artifacts.some(a => a.id === p.page);
+export function goTo(p) {
+  selected = p.page;
+  find.value = '';
+  if (current() && !inView(current())) view = ALL;
+  render();
+}
 
 const current = () => state.artifacts.find(a => a.id === selected) ?? null;
 const openInBrowser = a => window.open(`${location.origin}/a/${a.id}`, '_blank'); // the Mac app hands this to your browser
@@ -240,7 +249,7 @@ function group(name, list) {
 function item(a) {
   return h('button', {
     class: `art-item${a.id === selected ? ' on' : ''}`, draggable: true,
-    onClick: () => { selected = a.id; render(); },
+    onClick: () => { selected = a.id; render(); actions.notePlace(); },
     onContextmenu: e => { e.preventDefault(); more(e.currentTarget, a); },
     onDragstart: e => { e.dataTransfer.setData(DRAG.artifact, a.id); e.dataTransfer.effectAllowed = 'move'; },
   },
@@ -295,7 +304,7 @@ const moveItems = a => [
 const more = (anchor, a) => menu(anchor, [
   { label: 'Open in browser', icon: 'external', onClick: () => openInBrowser(a) },
   { label: 'Copy link', icon: 'copy', onClick: () => copyLink(a) },
-  { label: 'Edit with AI', icon: 'sparkles', onClick: () => { selected = a.id; render(); toggleChat(true); } },
+  { label: 'Edit with AI', icon: 'sparkles', onClick: () => { selected = a.id; render(); actions.notePlace(); toggleChat(true); } },
   { label: 'Rename', icon: 'pen', onClick: () => rename(a) },
   'sep', ...moveItems(a), 'sep',
   { label: 'Delete', icon: 'trash', onClick: () => remove(a) },

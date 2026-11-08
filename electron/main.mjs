@@ -35,6 +35,10 @@ function createWindow({ from, project } = {}) {
   });
   if (DEBUG) win.on('page-title-updated', e => e.preventDefault()); // keep "Relay Debug" in the title bar
   win.once('ready-to-show', () => win.show());
+  // A trackpad swipe goes back or forward (public/js/app.js), left being back as in VS Code. macOS sends it only when
+  // Trackpad > More Gestures > "Swipe between pages" allows three fingers.
+  win.on('swipe', (_e, dir) => (dir === 'left' || dir === 'right')
+    && win.webContents.executeJavaScript(`dispatchEvent(new CustomEvent('relay:swipe', { detail: '${dir}' }))`).catch(() => {}));
   // Links and window.open go to the default browser; only the Relay page stays in the window.
   win.webContents.setWindowOpenHandler(({ url }) => { openOutside(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', (event, url) => {

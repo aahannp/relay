@@ -1616,6 +1616,33 @@ esac
   for (let i = 0; i < 50 && !(await outputOf(live[2].id)); i++) await new Promise(r => setTimeout(r, 100));
   assert.match(await outputOf(live[2].id), new RegExp(`--resume ${db.chats.find(c => c.id === done.chatId).claudeSessionId}`), 'and so does the finished one, resumed');
   assert.ok(!(await ok('GET', '/api/chats')).find(c => c.id === closed.chatId).running, 'a chat you closed stays in Recent');
+  { // Back and forward (public/js/history.js)
+    const { createHistory } = await import('./public/js/history.js');
+    const at = (view, more) => ({ spaces: ['/p'], view, ...more });
+    const nav = createHistory();
+    for (const p of [at('board'), at('board', { task: 't1' }), at('board', { task: 't1' }), at('settings', { section: 'general' })]) nav.record(p);
+    assert.deepEqual([nav.go(-1), nav.go(-1), nav.go(-1), nav.can(-1), nav.can(1)], [at('board', { task: 't1' }), at('board'), null, false, true], 'back steps through, the repeated place counted once, and stops at the start');
+    nav.record(at('files', { file: 'a', line: 1 }));
+    assert.equal(nav.can(1), false, 'a new move after going back drops the steps ahead');
+    nav.record(at('files', { file: 'a', line: 9 }));
+    nav.record(at('files', { file: 'a', line: 40 }));
+    assert.deepEqual([nav.go(-1), nav.go(-1)], [at('files', { file: 'a', line: 9 }), at('board')], 'a few lines on in a file replaces the step, a long jump adds one');
+    nav.record(at('board', { task: 'gone' }));
+    nav.record(at('artifacts', { page: 'x' }));
+    assert.deepEqual(nav.go(-1, p => p.task !== 'gone'), at('board'), 'a place that no longer exists is skipped');
+    const dead = createHistory();
+    for (const p of [at('board'), at('files', { file: 'deleted' }), at('settings')]) dead.record(p);
+    const m = dead.mark();
+    dead.go(-1); // the file turns out to be gone, and so app.js resets
+    dead.reset(m);
+    assert.deepEqual([dead.can(1), dead.go(-1)], [false, at('files', { file: 'deleted' })], 'when nothing restores, the history is where it was');
+    const cap = createHistory();
+    for (let i = 0; i < 60; i++) cap.record(at('board', { task: `t${i}` }));
+    let back = 0;
+    while (cap.go(-1)) back++;
+    assert.equal(back, 49, 'it keeps 50 steps');
+    assert.ok(!/accent|#[0-9a-f]{3,6}\b/i.test(fs.readFileSync(new URL('./public/app.css', import.meta.url), 'utf8').match(/\.nav-history[^\n]*/g).join('')), 'the buttons use the existing tokens, no pink');
+  }
   console.log('All checks passed');
 } finally {
   desk.close();
