@@ -1645,6 +1645,16 @@ esac
     const placeOf = (focusedId, open) => new Function('panes', 'focusedId', 'shows', 'projectOf', `return (${place})();`)(
       new Map([['a', { session: { project: '/q' } }]]), focusedId, p => open.includes(p), p => p.session.project);
     assert.deepEqual([placeOf('a', ['/q']), placeOf('a', ['/p'])], [{ pane: 'a' }, { pane: null }], 'a focused pane in a space you closed isn\'t a place, so going back to it never reopens that space and drops the steps ahead');
+    const setFocus = fs.readFileSync(new URL('./public/js/agents.js', import.meta.url), 'utf8').match(/\nfunction setFocus[^]*?\n}\n/)[0];
+    const noted = new Function('panes', 'actions', `let focusedId = 'a'; let n = 0; ${setFocus}; actions.notePlace = () => n++; setFocus('a'); setFocus('b'); return n;`)(new Map(), {});
+    assert.equal(noted, 1, 'focus coming back to the pane that has it records nothing, so it never drops the steps ahead');
+    const appSrc = fs.readFileSync(new URL('./public/js/app.js', import.meta.url), 'utf8');
+    const listeners = [];
+    new Function('addEventListener', 'travel', appSrc.match(/^addEventListener\('mouse(down|up)'.*$/gm).join('\n'))((type, fn, capture) => listeners.push({ type, fn, capture }), () => {});
+    const down = listeners.find(l => l.type === 'mousedown');
+    const stopped = [];
+    down?.fn({ button: 4, preventDefault: () => stopped.push('default'), stopPropagation: () => stopped.push('propagation') });
+    assert.deepEqual([down?.capture, stopped], [true, ['default', 'propagation']], 'the forward mouse button never reaches the pane under the pointer, which would record it before going forward');
     assert.ok(!/accent|#[0-9a-f]{3,6}\b/i.test(fs.readFileSync(new URL('./public/app.css', import.meta.url), 'utf8').match(/\.nav-history[^\n]*/g).join('')), 'the buttons use the existing tokens, no pink');
   }
   console.log('All checks passed');

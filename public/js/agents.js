@@ -605,6 +605,7 @@ function renderHead(p) {
 }
 
 function setFocus(id) {
+  if (id === focusedId) return; // focus coming back to the same pane (another app, a dialog) isn't a move
   focusedId = id;
   for (const p of panes.values()) p.el.classList.toggle('focus', p.id === id);
   actions.notePlace();
