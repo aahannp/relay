@@ -1641,6 +1641,10 @@ esac
     let back = 0;
     while (cap.go(-1)) back++;
     assert.equal(back, 49, 'it keeps 50 steps');
+    const place = fs.readFileSync(new URL('./public/js/agents.js', import.meta.url), 'utf8').match(/export const place = (.+);/)[1];
+    const placeOf = (focusedId, open) => new Function('panes', 'focusedId', 'shows', 'projectOf', `return (${place})();`)(
+      new Map([['a', { session: { project: '/q' } }]]), focusedId, p => open.includes(p), p => p.session.project);
+    assert.deepEqual([placeOf('a', ['/q']), placeOf('a', ['/p'])], [{ pane: 'a' }, { pane: null }], 'a focused pane in a space you closed isn\'t a place, so going back to it never reopens that space and drops the steps ahead');
     assert.ok(!/accent|#[0-9a-f]{3,6}\b/i.test(fs.readFileSync(new URL('./public/app.css', import.meta.url), 'utf8').match(/\.nav-history[^\n]*/g).join('')), 'the buttons use the existing tokens, no pink');
   }
   console.log('All checks passed');
