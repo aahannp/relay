@@ -185,6 +185,8 @@ function renderNav() {
 }
 document.querySelector('.topbar .crumbs').before(h('div', { class: 'nav-history' }, backBtn, fwdBtn));
 // Mouse buttons 4 and 5, and a three-finger trackpad swipe (electron/main.mjs passes it on).
+// Their mousedown would focus the pane under the pointer, a move recorded before the travel on mouseup.
+addEventListener('mousedown', e => (e.button === 3 || e.button === 4) && (e.preventDefault(), e.stopPropagation()), true);
 addEventListener('mouseup', e => (e.button === 3 || e.button === 4) && (e.preventDefault(), travel(e.button === 3 ? -1 : 1)));
 addEventListener('relay:swipe', e => travel(e.detail === 'left' ? -1 : 1));
 on('sessions', renderNav); // a closed pane or a deleted task can leave nowhere to go

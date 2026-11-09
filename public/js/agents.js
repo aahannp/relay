@@ -605,12 +605,14 @@ function renderHead(p) {
 }
 
 function setFocus(id) {
+  if (id === focusedId) return; // focus coming back to the same pane (another app, a dialog) isn't a move
   focusedId = id;
   for (const p of panes.values()) p.el.classList.toggle('focus', p.id === id);
   actions.notePlace();
 }
-// Back and forward (app.js): the focused pane.
-export const place = () => ({ pane: panes.get(focusedId)?.docked ? null : focusedId }); // a docked pane is Artifacts'
+// Back and forward (app.js): the focused pane, if it's in the grid. A docked pane is Artifacts', and focus stays on a
+// pane whose space you closed: recorded, going back to it would reopen that space and land somewhere else.
+export const place = (p = panes.get(focusedId)) => ({ pane: p && !p.docked && shows(projectOf(p)) ? focusedId : null });
 export const has = p => !p.pane || panes.has(p.pane);
 export const goTo = p => p.pane && focusSession(p.pane);
 actions.focusedSession = () => (panes.get(focusedId)?.kind === 'term' ? focusedId : null);
