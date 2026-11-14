@@ -81,7 +81,7 @@ function render() {
         avatar({ kind: 'agent', agent: a.id }), h('b', {}, a.label), h('span', { class: 'grow' }),
         a.installed ? h('span', { class: 'chip', style: { color: 'var(--ok)' } }, icon('check', 11), 'Installed') : h('span', { class: 'chip' }, 'Not found on your PATH'),
         a.installed && h('button', { class: `btn xs${s.defaultAgent === a.id ? ' primary' : ''}`, onClick: () => set({ defaultAgent: a.id }) }, s.defaultAgent === a.id ? 'Default' : 'Make default')))),
-      ...[['claude', 'workers', 'New Claude Code panes, workers, and specialists left on the default. Sonnet keeps spend down; pick Opus for harder work.'], ['lead', 'lead agents', 'The agent that plans and hands out the work.']].map(([kind, title, text]) => {
+      ...[['claude', 'workers', 'New Claude Code panes, workers, and specialists left on the default. Sonnet keeps spend down; pick Opus for harder work, Fable for the hardest.'], ['lead', 'lead agents', 'The agent that plans and hands out the work.']].map(([kind, title, text]) => {
         const d = s.agentDefaults?.[kind] ?? { model: '', effort: '' };
         const save = patch => set({ agentDefaults: { ...s.agentDefaults, [kind]: { ...d, ...patch } } });
         const model = modelSelect(d.model);
