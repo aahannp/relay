@@ -120,7 +120,7 @@ actions.renameAgent = renameAgent;
 
 // ---------- Specialists ----------
 const claudeReady = () => state.agents.some(a => a.id === 'claude' && a.installed);
-const MODELS = [['', 'Their usual model'], ['opus', 'Opus: the most capable'], ['sonnet', 'Sonnet: everyday work'], ['haiku', 'Haiku: quick and cheap']];
+const MODELS = [['', 'Their usual model'], ['fable', 'Fable: the most capable, costs most'], ['opus', 'Opus: complex work'], ['sonnet', 'Sonnet: everyday work'], ['haiku', 'Haiku: quick and cheap']];
 export const modelSelect = value => h('select', { class: 'input' }, MODELS.map(([id, label]) => h('option', { value: id, selected: id === value }, label)));
 const EFFORTS = [['', 'Their usual effort'], ['low', 'Low: quickest'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Max: most thorough']];
 export const effortSelect = value => h('select', { class: 'input' }, EFFORTS.map(([id, label]) => h('option', { value: id, selected: id === value }, label)));

@@ -375,6 +375,11 @@ try {
   const close = (a, b, what) => assert.ok(Math.abs(a - b) < 1e-9, `${what}: ${a} vs ${b}`);
   close(priceReply('claude-haiku-5-5', { cache_read_input_tokens: 1000, output_tokens: 100 }).cost, 0.00006, 'haiku up to 100K');
   close(priceReply('claude-haiku-5-5', { cache_read_input_tokens: 200_000, output_tokens: 100 }).cost, 0.01025, 'haiku above 100K');
+  close(priceReply('claude-fable-5-2', { cache_read_input_tokens: 1000, output_tokens: 100 }).cost, 0.0042, 'fable 5.2: $0.20 cache read, $40 output');
+  const fableWrites = priceReply('claude-fable-5-2', { cache_creation_input_tokens: 1_000_000, cache_creation: { ephemeral_1h_input_tokens: 400_000 } });
+  close(fableWrites.parts.write5m, 6, 'fable 5.2: $10 per MTok of 5-minute cache writes (600K here)');
+  close(fableWrites.parts.write1h, 6.4, 'fable 5.2: $16 per MTok of 1-hour cache writes (400K here)');
+  assert.equal(priceReply('claude-fable-5', { output_tokens: 7 }).cost, null, 'a Fable with no price in the table is unpriced');
   assert.equal(priceReply('claude-mystery-9', { output_tokens: 7 }).cost, null, 'a model not in the table is unpriced, never guessed');
   const spentAt = new Date(2026, 0, 5, 14, 30).toISOString();
   const said = (id, model, usage, extra = {}) => line({ type: 'assistant', timestamp: spentAt, sessionId: named, cwd: repo, requestId: `req_${id}`, message: { id, model, usage }, ...extra });
@@ -492,6 +497,11 @@ try {
   assert.deepEqual((await runOf({ specialist: 'christie', model: 'lighter' })).slice(0, 2), ['haiku', 'medium'], 'a lighter model is one step below her usual one');
   assert.deepEqual((await runOf({ specialist: 'christie', model: 'stronger', effort: 'higher' })).slice(0, 2), ['opus', 'high'], 'stronger and higher go up a step');
   assert.deepEqual((await runOf({ specialist: 'scout', model: 'lighter', effort: 'lower' })).slice(0, 2), ['haiku', 'low'], 'and stop at the lightest');
+  const [fm, , fOut] = await runOf({ specialist: 'christie', model: 'fable' });
+  assert.equal(fm, 'fable', 'Fable can be picked by name');
+  assert.match(fOut, /--model fable --effort medium/, 'and is passed to claude as --model fable');
+  assert.deepEqual((await runOf({ specialist: 'vera', model: 'stronger' })).slice(0, 2), ['fable', 'high'], 'Fable is one step above Opus');
+  assert.deepEqual((await runOf({ specialist: 'vera', model: 'fable', effort: 'higher' })).slice(0, 2), ['fable', 'xhigh'], 'and stronger stops at Fable');
   const [pm, pe, pOut] = await runOf({ kind: 'agent', agent: 'claude' });
   assert.deepEqual([pm, pe], ['sonnet', ''], 'a plain Claude agent (a worker) runs on Sonnet, with your own effort');
   assert.match(pOut, /--model sonnet/, 'passed to claude');
@@ -503,6 +513,8 @@ try {
   assert.match(leadOut, words("use Relay agents (start_task, start_agent), not Claude's built-in Agent tool. If a start fails, retry once, then tell the user the exact error"),
     "a lead is told to use Relay's agents, and to retry a failed start once and then tell you the error");
   assert.equal((await request('PATCH', '/api/settings', { body: { agentDefaults: { claude: { model: 'gpt', effort: '' }, lead: { model: '', effort: '' } } } })).status, 400, 'defaults must be known models');
+  assert.equal((await request('PATCH', '/api/settings', { body: { agentDefaults: { claude: { model: 'fable', effort: '' }, lead: { model: 'fable', effort: 'high' } } } })).status, 200, 'Fable is a known default');
+  await ok('PATCH', '/api/settings', { agentDefaults: { claude: { model: 'sonnet', effort: '' }, lead: { model: 'opus', effort: 'high' } } });
   assert.equal((await request('PATCH', '/api/settings', { body: { scrollSpeed: 10 } })).status, 400, 'scroll speed has a sensible range');
   {
     const { lastProject } = await ok('GET', '/api/settings');
@@ -767,7 +779,7 @@ try {
   fs.writeFileSync(path.join(fakeBin, 'claude'), '#!/bin/sh\necho "FAKE-CLAUDE $*"\nexec cat\n', { mode: 0o755 }); // stays running
   const editChat = (body = {}, headers = {}) => request('POST', `/api/artifacts/${art.id}/edit-chat`, { body, headers });
   assert.equal((await editChat({}, { 'x-desk-session': shell.id })).status, 403, "agents can't open an edit chat");
-  assert.equal((await editChat({ model: 'gpt' })).status, 400, 'the edit model is haiku, sonnet or opus');
+  assert.equal((await editChat({ model: 'gpt' })).status, 400, 'the edit model is haiku, sonnet, opus or fable');
   const editor = (await editChat()).body;
   const workCopy = path.join(tmp, 'data', 'artifact-edits', art.id, 'page.html');
   assert.equal(fs.readFileSync(workCopy, 'utf8'), '<h1>v2</h1>', 'it works on a copy of the page');
