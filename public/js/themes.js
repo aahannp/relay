@@ -12,6 +12,10 @@ const theme = (name, dark, [bg, side, panel, panel2, line, text, dim, accent], c
 });
 
 export const THEMES = {
+  t3dark: theme('T3 Dark', true, ['#0a0a0a', '#111111', '#111111', '#181818', '#1f1f1f', '#f5f5f5', '#818181', '#346bf1'],
+    ['#262626', '#ff6467', '#00d492', '#ffb900', '#346bf1', '#ed6aff', '#00d3f2', '#d4d4d4', '#737373', '#ffa2a2', '#5ee9b5', '#ffd230', '#51a2ff', '#f4a8ff', '#53eafd', '#fafafa']),
+  t3light: theme('T3 Light', false, ['#fcfcfc', '#fafafa', '#ffffff', '#fafafa', '#e4e4e7', '#27272a', '#71717b', '#155dfc'],
+    ['#27272a', '#c10007', '#007a55', '#bb4d00', '#1b4ed8', '#a800b7', '#007595', '#71717b', '#52525c', '#e7000b', '#009966', '#e17100', '#155dfc', '#c800de', '#0092b8', '#9f9fa9']),
   midnight: theme('Midnight', true, ['#0b0c10', '#08090c', '#12141a', '#1a1d26', '#252a36', '#e8eaf0', '#8b91a3', '#ff3ea5'],
     ['#1c1f27', '#ff5c7a', '#4ade80', '#fbbf24', '#60a5fa', '#f472b6', '#22d3ee', '#d4d7e0', '#5b6172', '#ff8095', '#86efac', '#fcd34d', '#93c5fd', '#f9a8d4', '#67e8f9', '#ffffff']),
   tokyo: theme('Tokyo Night', true, ['#1a1b26', '#16161e', '#1f2030', '#24283b', '#2f3549', '#c0caf5', '#7a82a8', '#7aa2f7'],
