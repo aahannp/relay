@@ -376,6 +376,9 @@ try {
   close(priceReply('claude-haiku-5-5', { cache_read_input_tokens: 1000, output_tokens: 100 }).cost, 0.00006, 'haiku up to 100K');
   close(priceReply('claude-haiku-5-5', { cache_read_input_tokens: 200_000, output_tokens: 100 }).cost, 0.01025, 'haiku above 100K');
   close(priceReply('claude-fable-5-2', { cache_read_input_tokens: 1000, output_tokens: 100 }).cost, 0.0042, 'fable 5.2: $0.20 cache read, $40 output');
+  const fableWrites = priceReply('claude-fable-5-2', { cache_creation_input_tokens: 1_000_000, cache_creation: { ephemeral_1h_input_tokens: 400_000 } });
+  close(fableWrites.parts.write5m, 6, 'fable 5.2: $10 per MTok of 5-minute cache writes (600K here)');
+  close(fableWrites.parts.write1h, 6.4, 'fable 5.2: $16 per MTok of 1-hour cache writes (400K here)');
   assert.equal(priceReply('claude-fable-5', { output_tokens: 7 }).cost, null, 'a Fable with no price in the table is unpriced');
   assert.equal(priceReply('claude-mystery-9', { output_tokens: 7 }).cost, null, 'a model not in the table is unpriced, never guessed');
   const spentAt = new Date(2026, 0, 5, 14, 30).toISOString();
