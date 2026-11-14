@@ -135,6 +135,7 @@ function route(method, pattern, handler) {
 route('GET', '/api/info', () => ({
   url: S.serverUrl(), token: TOKEN, mcpUrl: `${S.serverUrl()}/mcp`,
   electron: Boolean(process.versions.electron) && !VSCODE, vscode: VSCODE, voice: Boolean(VOICE_HELPER), home: os.homedir(), version: U.current(), debug: DEBUG,
+  yourCompactWindow: S.yourAutoCompactWindow() ?? null, // your Claude Code's own auto-compact window, which Relay then uses
 }));
 
 // Projects
@@ -169,13 +170,16 @@ route('PATCH', '/api/settings', ({ req, body }) => {
     if (key === 'agentDefaults') {
       const ok = ['claude', 'lead'].every(k => T.MODELS.includes(value?.[k]?.model) && T.EFFORTS.includes(value?.[k]?.effort));
       if (!ok) throw fail(400, 'Each default needs a known model and effort');
+      // '' is Claude Code's own window; else Claude Code's autoCompactWindow range.
+      const window = w => w === '' || (Number.isInteger(w) && w >= 100_000 && w <= 1_000_000);
+      if (!['claude', 'lead'].every(k => window(value[k].compactWindow))) throw fail(400, "Each default compacts at Claude Code's own window or at 100,000 to 1,000,000 tokens");
     }
     if (key === 'permissionMode' && !PERMISSION_MODES.includes(value)) throw fail(400, 'Unknown permission mode');
     if (key === 'leadUpkeep') {
-      const { on, compactAt, replaceAfter, windowCap } = value ?? {};
+      const { on, compactAt, replaceAfter } = value ?? {};
       const within = (n, low, high) => Number.isInteger(n) && n >= low && n <= high;
-      if (typeof on !== 'boolean' || !within(compactAt, 50, 95) || !within(replaceAfter, 1, 10) || !within(windowCap, 50_000, 2_000_000)) {
-        throw fail(400, 'Lead upkeep is on or off, compacts at 50 to 95% of a 50,000 to 2,000,000-token window and replaces after 1 to 10 compactions');
+      if (typeof on !== 'boolean' || !within(compactAt, 50, 95) || !within(replaceAfter, 1, 10)) {
+        throw fail(400, "Lead upkeep is on or off, compacts at 50 to 95% of the lead's window and replaces after 1 to 10 compactions");
       }
     }
     if (key === 'openSpaces' && !(Array.isArray(value) && value.every(p => typeof p === 'string'))) throw fail(400, 'openSpaces is a list of project folder paths');
@@ -210,12 +214,14 @@ route('POST', '/api/sessions', async ({ req, body }) => {
 });
 route('DELETE', '/api/sessions/:id', ({ req, params }) => (S.stop(noShell(req, sameProject(req, params.id), 'stop')), {}));
 
-// Claude's SessionStart hook reports the conversation id a pane is on (it changes on /clear).
+// Claude's SessionStart hook reports the conversation id a pane is on (it changes on /clear). After a compaction
+// its answer, printed by the hook, tells the agent again who it is and what is around it.
 route('POST', '/api/claude-session', ({ req, body }) => {
   const s = caller(req);
   if (!s) throw fail(404, 'Unknown session');
   S.noteClaudeSession(s, body.session_id);
-  return {};
+  const text = body.source === 'compact' ? S.reorient(s) : '';
+  return text ? { raw: JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } }), type: 'application/json' } : {};
 });
 
 // Claude's status line reports its context window's size (see statusLine in lib/sessions.mjs), for lead upkeep,
@@ -275,7 +281,8 @@ const findChat = id => db.chats.find(c => c.id === id) ?? (() => { throw fail(40
 route('GET', '/api/chats', ({ req, query }) => {
   const project = fromAgent(req) ? (caller(req) ?? (() => { throw fail(403, 'Only agents inside Relay can reach other agents'); })()).project
     : query.get('project') ? expand(query.get('project')) : null; // an agent sees only its own project's chats
-  return db.chats.filter(c => !project || c.project === project).map(S.chatInfo).sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+  return db.chats.filter(c => !project || c.project === project).map(c => fromAgent(req) ? { ...S.chatInfo(c), name: c.name } : S.chatInfo(c)) // agents reach a closed worker by its own name
+    .sort((a, b) => b.lastActiveAt - a.lastActiveAt);
 });
 async function reopen(chat, prompt = '') {
   const s = await S.createSession({ chatId: chat.id, prompt });
@@ -335,9 +342,9 @@ route('GET', '/api/chats/:id/chat', ({ req, params, query }) => { // a closed pa
   const from = caller(req);
   if (fromAgent(req) && !from) throw fail(403, 'Only agents inside Relay can reach other agents');
   if (from && chat.project !== from.project) throw fail(403, 'Agents can only reach agents in their own project');
-  return S.chatConversation(chat, Math.min(Number(query.get('last')) || 30, 200));
+  return S.chatConversation(chat, Math.min(Number(query.get('last')) || 30, 200), { full: query.get('full') === '1' });
 });
-route('GET', '/api/sessions/:id/chat', ({ req, params, query }) => S.conversation(sameProject(req, params.id), Math.min(Number(query.get('last')) || 30, 200)));
+route('GET', '/api/sessions/:id/chat', ({ req, params, query }) => S.conversation(sameProject(req, params.id), Math.min(Number(query.get('last')) || 30, 200), { full: query.get('full') === '1' }));
 route('POST', '/api/sessions/:id/clone', async ({ req, params, body }) => {
   mayStartAgents(req);
   const src = sameProject(req, params.id);
@@ -708,6 +715,7 @@ route('PATCH', '/api/tasks/:id', ({ req, params, body }) => {
   if (body.status !== undefined && !STATUSES.includes(body.status)) throw fail(400, `Status must be one of: ${STATUSES.join(', ')}`);
   const toReview = body.status === 'review' && task.status !== 'review';
   if (body.status !== undefined && body.status !== task.status) moved(req, task, body.status);
+  if (body.status === 'doing' && task.status !== 'doing') task.doingSince = Date.now(); // older notes aren't a report (see onExit)
   for (const key of ['title', 'description', 'status', 'agent', 'worktree']) if (body[key] !== undefined) task[key] = body[key];
   if (body.before !== undefined) { // drag-and-drop: place this task just before another one
     db.tasks.splice(db.tasks.indexOf(task), 1);
@@ -727,13 +735,13 @@ route('DELETE', '/api/tasks/:id', ({ params }) => {
 route('POST', '/api/tasks/:id/comments', ({ req, params, body }) => {
   const task = findTask(params.id);
   if (!String(body.text || '').trim()) throw fail(400, 'Comment is empty');
-  task.notes.push({ at: Date.now(), by: caller(req)?.name || 'You', text: body.text.trim() });
+  task.notes.push({ at: Date.now(), by: caller(req)?.name || 'You', sid: caller(req)?.id ?? null, text: body.text.trim() });
   for (const pr of new Set(body.text.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g))) {
     S.note(task.project, caller(req)?.id ?? null, 'PR links posted', `${S.plain(caller(req)?.name || 'You')} posted ${pr} on ${S.plain(task.title, 60)}`);
   }
   task.updatedAt = Date.now();
   changed('tasks');
-  if (task.status === 'doing' && caller(req)?.id === task.sessionId && /blocked/i.test(body.text)) S.tellStarter(task, 'is blocked');
+  if (task.status === 'doing' && caller(req)?.id === task.sessionId && S.isBlocked(body.text)) S.tellStarter(task, 'is blocked');
   return task;
 });
 route('POST', '/api/tasks/:id/start', async ({ req, params, body }) => {
@@ -747,7 +755,7 @@ route('POST', '/api/tasks/:id/start', async ({ req, params, body }) => {
   const was = task.status;
   const s = await S.createSession({ project: task.project, agent, prompt, name: task.title, taskId: task.id, worktree, specialist: body.specialist || null, model: body.model || '', effort: body.effort || '', startedBy: starter(req) });
   if (task.status !== 'doing') S.note(task.project, s.id, 'tasks moved to doing', `Task ${S.plain(task.title, 60)} moved to doing`); // by its own agent, which knows
-  Object.assign(task, { status: 'doing', sessionId: s.id, agent, worktree, branch: s.worktree?.branch ?? null, worktreePath: s.worktree?.path ?? null, updatedAt: Date.now() });
+  Object.assign(task, { status: 'doing', doingSince: Date.now(), sessionId: s.id, agent, worktree, branch: s.worktree?.branch ?? null, worktreePath: s.worktree?.path ?? null, updatedAt: Date.now() });
   changed('tasks');
   if (fromAgent(req)) {
     await S.launched(s).catch(e => {
@@ -780,7 +788,7 @@ const existingDir = p => {
 route('GET', '/api/review/file', ({ query }) => G.fileVersions(existingDir(query.get('worktree')), query.get('file')));
 route('GET', '/api/review/diff', async ({ req, query }) => {
   const dir = existingDir(query.get('worktree'));
-  if (fromAgent(req) && !visibleSessions(req).some(s => s.cwd === dir)) throw fail(403, 'Agents can only see the changes of agents in their own project');
+  if (fromAgent(req) && !visibleSessions(req).some(s => s.cwd === dir) && !db.chats.some(c => c.project === caller(req)?.project && c.cwd === dir)) throw fail(403, 'Agents can only see the changes of agents in their own project');
   return { text: await G.diffText(dir) };
 });
 route('POST', '/api/review/commit', ({ body }) => G.commit(existingDir(body.worktree), String(body.message || 'Relay changes')));

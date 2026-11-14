@@ -82,7 +82,7 @@ function render() {
         a.installed ? h('span', { class: 'chip', style: { color: 'var(--ok)' } }, icon('check', 11), 'Installed') : h('span', { class: 'chip' }, 'Not found on your PATH'),
         a.installed && h('button', { class: `btn xs${s.defaultAgent === a.id ? ' primary' : ''}`, onClick: () => set({ defaultAgent: a.id }) }, s.defaultAgent === a.id ? 'Default' : 'Make default')))),
       ...[['claude', 'workers', 'New Claude Code panes, workers, and specialists left on the default. Sonnet keeps spend down; pick Opus for harder work, Fable for the hardest.'], ['lead', 'lead agents', 'The agent that plans and hands out the work.']].map(([kind, title, text]) => {
-        const d = s.agentDefaults?.[kind] ?? { model: '', effort: '' };
+        const d = s.agentDefaults?.[kind] ?? { model: '', effort: '', compactWindow: '' };
         const save = patch => set({ agentDefaults: { ...s.agentDefaults, [kind]: { ...d, ...patch } } });
         const model = modelSelect(d.model);
         const effort = effortSelect(d.effort);
@@ -90,8 +90,14 @@ function render() {
         effort.options[0].textContent = 'Your Claude Code default';
         model.addEventListener('change', () => save({ model: model.value }));
         effort.addEventListener('change', () => save({ effort: effort.value }));
-        return setting(`Model and effort for ${title}`, `${text} Agents can still ask for a lighter or stronger one for a job.`,
-          h('div', { class: 'row' }, model, effort));
+        const yours = state.info.yourCompactWindow;
+        const compact = h('select', { class: 'input' }, [['', "Claude Code's own window"], ...[...new Set([200_000, 300_000, 400_000, 600_000, d.compactWindow])].filter(Number)
+          .sort((a, b) => a - b).map(n => [n, `Compact at ${n / 1000}K`])].map(([value, label]) => h('option', { value, selected: String(d.compactWindow) === String(value) }, label)));
+        compact.addEventListener('change', () => save({ compactWindow: compact.value ? Number(compact.value) : '' }));
+        return setting(`Model and effort for ${title}`, `${text} Agents can still ask for a lighter or stronger one for a job. A bigger window means fewer compactions; each turn re-reads more.`,
+          h('div', {}, h('div', { class: 'row', style: { flexWrap: 'wrap' } }, model, effort,
+            yours ? h('span', { class: 'muted', style: { fontSize: '12px' } }, `Your Claude Code sets ${Math.round(yours / 1000)}K; Relay uses it`) : compact),
+            !yours && h('div', { class: 'muted', style: { fontSize: '12px', marginTop: '4px' } }, 'Applies to agents started from now on.')));
       }),
       setting('Permissions for Claude agents', PERMISSIONS.find(p => p[0] === s.permissionMode)?.[2] ?? '',
         h('div', { class: 'segmented' }, PERMISSIONS.map(([id, label]) => h('button', { class: s.permissionMode === id ? 'on' : '', onClick: () => set({ permissionMode: id }) }, label)))),
@@ -121,7 +127,7 @@ function render() {
         ? 'On: an agent can start a specialist or a worker, on a model it picks, for part of its job. A lead agent needs this.'
         : 'Off: agents can see the team but only you start agents.',
       h('label', { class: 'toggle' }, h('input', { type: 'checkbox', checked: s.agentsCanSpawn !== false, onChange: e => set({ agentsCanSpawn: e.target.checked }) }))),
-      leadUpkeep({ on: false, compactAt: 70, windowCap: 200_000, replaceAfter: 3, ...s.leadUpkeep }),
+      leadUpkeep({ on: false, compactAt: 70, replaceAfter: 3, ...s.leadUpkeep }),
       setting('Agents can edit the team', s.agentsCanEditTeam !== false
         ? 'On: when you ask ("Scout, make your answers shorter"), an agent can change a specialist\'s profile. It asks you first each time. Applies to agents started from then on.'
         : 'Off: agents can read the team\'s profiles but only you change them.',
@@ -160,15 +166,14 @@ function render() {
     h('label', { class: 'toggle' }, h('input', { type: 'checkbox', checked: s.autoUpdate !== false, onChange: e => set({ autoUpdate: e.target.checked }) }))))));
 }
 
-// A switch plus three small numbers: when to compact a lead (a % of a window in thousands of tokens), and after
-// how many compactions to replace it.
+// A switch plus two small numbers: when to compact a lead (a % of its window), and after how many compactions to replace it.
 function leadUpkeep(u) {
   const save = patch => set({ leadUpkeep: { ...u, ...patch } });
-  const number = (key, min, max, scale = 1) => h('input', { class: 'input', type: 'number', min, max, value: u[key] / scale, style: { width: '62px' },
-    onChange: e => save({ [key]: Math.round(Number(e.target.value)) * scale }) });
-  return setting('Keep lead agents fresh', 'When a lead is idle with its context that full, Relay compacts it, and after that many compactions a fresh lead with the same name takes over its work. A smaller window (the model\'s own, or the auto-compact window: your Claude Code\'s, else 200K) wins.',
+  const number = (key, min, max) => h('input', { class: 'input', type: 'number', min, max, value: u[key], style: { width: '62px' },
+    onChange: e => save({ [key]: Math.round(Number(e.target.value)) }) });
+  return setting('Keep lead agents fresh', 'When a lead is idle with its context that full, Relay compacts it, and after that many compactions a fresh lead with the same name takes over its work. The window is the lead\'s compact window under Defaults (your Claude Code\'s, if it sets one).',
     h('div', { class: 'row', style: { flexWrap: 'wrap' } },
-      'Compact at', number('compactAt', 50, 95), '% of a', number('windowCap', 50, 2000, 1000), 'K-token window, replace after', number('replaceAfter', 1, 10), 'compactions',
+      'Compact at', number('compactAt', 50, 95), "% of the lead's window, replace after", number('replaceAfter', 1, 10), 'compactions',
       h('label', { class: 'toggle' }, h('input', { type: 'checkbox', checked: u.on, onChange: e => save({ on: e.target.checked }) }))));
 }
 
