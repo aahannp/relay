@@ -1164,7 +1164,7 @@ esac
     const skill = path.join(claudeHome, 'skills', 'handoff');
     fs.rmSync(skill, { recursive: true, force: true });
     Object.assign(HANDOFF, { wait: 1000, poll: 50 });
-    const { file } = (await handoff(lead.id)).body;
+    let { file } = (await handoff(lead.id)).body;
     assert.match(file, new RegExp(`^${repo}/\\.agent-desk/handoffs/\\d{4}-\\d\\d-\\d\\d-\\d{4}-hand-lead\\.md$`), 'its doc goes in the project, stamped and named');
     await screenOf(lead.id, /Write a handoff doc so a fresh lead.*## Next steps/, 'no skill: the built-in prompt is typed');
     assert.equal((await stepped('failed'))?.error, 'No handoff from Hand Lead after 10 minutes; it keeps running', 'nothing written: it times out');
@@ -1173,7 +1173,9 @@ esac
     fs.mkdirSync(skill, { recursive: true });
     fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: handoff\n---\n');
     HANDOFF.wait = 30_000;
-    assert.equal((await handoff(lead.id)).status, 200);
+    const again = await handoff(lead.id);
+    assert.equal(again.status, 200);
+    file = again.body.file; // stamped anew: the minute may have turned since the first one
     assert.equal((await handoff(lead.id)).status, 409, 'one at a time');
     await screenOf(lead.id, new RegExp(`/handoff write it to ${file.replace(/[.]/g, '\\.')}`), 'with your skill: /handoff and the path');
     fs.writeFileSync(file, '# Handoff: build it\n## Next steps\n1. Ship\n');
