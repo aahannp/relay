@@ -18,6 +18,7 @@ import { priceReply } from './lib/usage.mjs';
 import * as U from './lib/update.mjs';
 import { parseMarkdown, meterView, quoteReply, resetLabel, limitChips } from './public/js/ui.js';
 import { stripDeskCookies } from './lib/cookies.mjs';
+import { groupsOf } from './public/js/artifacts.js';
 import { randomUUID, createHash } from 'node:crypto';
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-desk-check-')));
@@ -832,6 +833,14 @@ try {
   await ok('DELETE', '/api/artifact-folders/Empty');
   await ok('DELETE', `/api/artifacts/${filed.id}`);
 
+  // The All view puts the group with the newest page first, so a page an agent just saved is at the top, filed or not
+  {
+    const page = (id, updatedAt, folder) => ({ id, updatedAt, folder });
+    const pages = [page('new', 3), page('mid', 2, 'Research'), page('old', 1, 'Old')];
+    assert.deepEqual(groupsOf(pages, ['Old', 'Research', 'Empty']).map(([name, list]) => [name, list.map(a => a.id)]),
+      [['-', ['new']], ['Research', ['mid']], ['Old', ['old']]], 'newest group first; empty folders left out');
+  }
+
   // "Edit with AI": a small-model chat beside the page, on a copy of it, that saves back by id
   fs.writeFileSync(path.join(fakeBin, 'claude'), '#!/bin/sh\necho "FAKE-CLAUDE $*"\nexec cat\n', { mode: 0o755 }); // stays running
   const editChat = (body = {}, headers = {}) => request('POST', `/api/artifacts/${art.id}/edit-chat`, { body, headers });
@@ -1155,7 +1164,7 @@ esac
     const skill = path.join(claudeHome, 'skills', 'handoff');
     fs.rmSync(skill, { recursive: true, force: true });
     Object.assign(HANDOFF, { wait: 1000, poll: 50 });
-    const { file } = (await handoff(lead.id)).body;
+    let { file } = (await handoff(lead.id)).body;
     assert.match(file, new RegExp(`^${repo}/\\.agent-desk/handoffs/\\d{4}-\\d\\d-\\d\\d-\\d{4}-hand-lead\\.md$`), 'its doc goes in the project, stamped and named');
     await screenOf(lead.id, /Write a handoff doc so a fresh lead.*## Next steps/, 'no skill: the built-in prompt is typed');
     assert.equal((await stepped('failed'))?.error, 'No handoff from Hand Lead after 10 minutes; it keeps running', 'nothing written: it times out');
@@ -1164,7 +1173,9 @@ esac
     fs.mkdirSync(skill, { recursive: true });
     fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: handoff\n---\n');
     HANDOFF.wait = 30_000;
-    assert.equal((await handoff(lead.id)).status, 200);
+    const again = await handoff(lead.id);
+    assert.equal(again.status, 200);
+    file = again.body.file; // stamped anew: the minute may have turned since the first one
     assert.equal((await handoff(lead.id)).status, 409, 'one at a time');
     await screenOf(lead.id, new RegExp(`/handoff write it to ${file.replace(/[.]/g, '\\.')}`), 'with your skill: /handoff and the path');
     fs.writeFileSync(file, '# Handoff: build it\n## Next steps\n1. Ship\n');
