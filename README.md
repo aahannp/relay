@@ -12,7 +12,8 @@ real terminal running the agent's own CLI, so Claude Code uses your normal Claud
 [Issues](https://github.com/aahannp/relay/issues) ·
 [Report a bug](https://github.com/aahannp/relay/issues/new) ·
 [Verify a release](#verify-a-release) ·
-[Website](https://aahannp.github.io/relay/)
+[Website](https://aahannp.github.io/relay/) ·
+[Team](https://aahannp.github.io/relay/team.html)
 
 <img src="docs/assets/demo.gif" alt="A lead agent is given a goal, plans three tasks on the Board, three workers edit files side by side in their own worktrees, and Review shows the diff" width="900">
 
@@ -150,7 +151,7 @@ flowchart LR
   `/compact` into it. After 3 compactions a fresh lead with the same name takes over, handed
   its summary, open tasks, running workers and last messages; the old chat stays in the sidebar.
 - **Team**: named specialists, each a Claude agent with one area of expertise, its own instructions and,
-  if you like, a model (Fable, Opus, Sonnet or Haiku). Seven come built in, and every agent's brief says when to pick
+  if you like, a model (Fable, Opus, Sonnet or Haiku). Nine come built in ([meet them](https://aahannp.github.io/relay/team.html), each with an agent file you can use in plain Claude Code), and every agent's brief says when to pick
   each one:
 
   | Name | Role | Use it | Model |
