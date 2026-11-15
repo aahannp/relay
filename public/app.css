@@ -377,6 +377,17 @@ textarea.input { resize: vertical; min-height: 84px; line-height: 1.55; }
 .meter.warn .meter-cost, .meter.bad .meter-cost { color: var(--dim); }
 @container (max-width: 520px) { .meter-cost { display: none; } }
 @container (max-width: 400px) { .meter { display: none; } }
+/* Plan limits ("5h 42% · 2h 10m"), after the meter: amber over 80%, red at 100%. A narrow pane drops the percentages first,
+   then the 7-day chip, then both, so its buttons never move. */
+.limits { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; font: 500 10.5px var(--mono); font-variant-numeric: tabular-nums; color: var(--dim); white-space: nowrap; }
+.limits[hidden] { display: none; }
+.limit { border-radius: 6px; cursor: default; }
+.limit-name { color: var(--text); opacity: .75; }
+.limit.warn { color: var(--warn); } .limit.bad { color: var(--bad); }
+.limit.warn .limit-name, .limit.bad .limit-name { color: inherit; opacity: 1; }
+@container (max-width: 640px) { .limit-pct { display: none; } }
+@container (max-width: 520px) { .limit-weekly { display: none; } }
+@container (max-width: 440px) { .limits { display: none; } }
 .pane-body { position: relative; flex: 1; min-height: 0; display: flex; }
 /* content-box: xterm's fit addon reads this box's CSS width and height as the space to fill, so the padding must not be
    counted in them, or the last column slides under the scrollbar and the bottom row past the edge. */
@@ -385,6 +396,17 @@ textarea.input { resize: vertical; min-height: 84px; line-height: 1.55; }
 .term-peek { position: absolute; left: 0; right: 0; visibility: hidden; pointer-events: none; }
 .term-peek .xterm { height: auto; }
 .term-host .xterm-viewport { scrollbar-width: thin; background-color: transparent; } /* xterm.css paints it black, and it shows below the last row */
+/* Reply to a selection in an agent's pane: a button by the selection, then a small box to ask about it. */
+.reply-btn { position: absolute; z-index: 5; box-shadow: var(--shadow-sm); }
+.reply-pop { position: fixed; z-index: 60; width: min(380px, calc(100vw - 16px)); display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px;
+  background: var(--panel2); border: 1px solid var(--line); color: var(--text); box-shadow: var(--shadow); animation: pop .16s var(--ease); }
+.reply-quote { max-height: calc(4 * 1.45em); overflow: auto; padding-left: 9px; border-left: 2px solid var(--line); color: var(--dim); opacity: .85;
+  font: 11.5px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.reply-pop textarea.input { min-height: 0; resize: none; }
+.reply-err { color: var(--bad); font-size: 12px; }
+.reply-err:empty { display: none; }
+.reply-row { display: flex; align-items: center; gap: 6px; }
+.reply-hint { flex: 1; min-width: 0; color: var(--dim); font-size: 11px; }
 /* Drop markers while dragging a chat or a pane into the grid. */
 .pane.drop-before { box-shadow: inset 4px 0 0 var(--accent), 0 0 0 1px var(--accent); }
 .pane.drop-after { box-shadow: inset -4px 0 0 var(--accent), 0 0 0 1px var(--accent); }

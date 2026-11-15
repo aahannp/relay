@@ -225,15 +225,17 @@ route('POST', '/api/claude-session', ({ req, body }) => {
 });
 
 // Claude's status line reports its context window's size (see statusLine in lib/sessions.mjs), for lead upkeep,
-// and that a reply came in, for the pane meter.
+// that a reply came in, for the pane meter, and your plan's usage limits, for the pane header.
 route('POST', '/api/context', ({ req, body }) => {
   const s = caller(req);
   if (!s) throw fail(404, 'Unknown session');
   const size = Number(body.context_window?.context_window_size);
   if (size >= 10_000 && size <= 100_000_000) s.contextWindow = size;
   S.meterSoon(s);
+  S.noteLimits(body.rate_limits);
   return {};
 });
+route('GET', '/api/limits', () => S.usageLimits());
 
 // Claude's PostToolUse hook reports each file an agent edits. The repo it's in becomes a project (you stay on yours),
 // a worktree the agent made itself is recorded for Review, and the agent's project remembers the repo.
@@ -356,6 +358,11 @@ route('GET', '/api/sessions/:id/output', ({ req, params, query }) =>
 // agent in its own project, never a shell or a permission prompt.
 route('POST', '/api/sessions/:id/input', async ({ req, params, body }) => {
   const text = String(body.text ?? '');
+  // Only you can Ask aside (/btw): from an agent, the flag is ignored and deliver refuses a leading /.
+  if (!fromAgent(req) && body.paste) {
+    if (!(await S.paste(findSession(params.id), text, { aside: body.aside === true }))) throw fail(409, 'A prompt appeared in the pane; answer it first');
+    return {};
+  }
   if (!fromAgent(req)) return (S.send(findSession(params.id), text, body.submit !== false), {});
   mayMessage(req);
   const from = caller(req);

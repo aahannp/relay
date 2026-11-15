@@ -170,6 +170,16 @@ export function askText(title, { label = '', value = '', placeholder = '', ok = 
   });
 }
 
+// Your reply to text selected in a pane: each line quoted with "> " (trailing spaces trimmed), a blank line, then what you
+// asked. A selection past 2,000 characters keeps its first 2,000 and says how many lines were cut.
+export function quoteReply(selection, text) {
+  const sel = selection.replace(/\r\n?/g, '\n').replace(/\s+$/, '');
+  const cut = sel.length > 2000 ? sel.slice(2000).split('\n').length : 0;
+  const lines = sel.slice(0, 2000).replace(/\s+$/, '').split('\n').map(line => `> ${line}`.trimEnd());
+  if (cut) lines.push(`> (${cut} more line${cut === 1 ? '' : 's'} cut)`);
+  return `${lines.join('\n')}\n\n${text.trim()}`;
+}
+
 // A dropdown under `anchor`. Items: { label, icon, sub, onClick, disabled }, 'sep', or { heading }.
 export function menu(anchor, items, { align = 'left' } = {}) {
   document.querySelector('.menu')?.remove();
@@ -242,6 +252,33 @@ export function meterView(m) {
       priced && m.unpriced ? `Not priced: ${m.unpriced} ${m.unpriced === 1 ? 'reply' : 'replies'} on a model without a price` : '',
     ].filter(Boolean).join('\n'),
   };
+}
+
+// Your plan's usage limits in a pane header (see noteLimits in lib/sessions.mjs): "2h 10m" until a window resets,
+// under a day; beyond that the weekday and time ("Tue 09:00"). '' once it has passed. Local time, 24-hour.
+const clock = { hour: '2-digit', minute: '2-digit', hour12: false };
+export function resetLabel(resetsAt, now = Date.now()) {
+  const mins = Math.ceil((resetsAt - now) / 60_000);
+  if (!(mins > 0)) return '';
+  if (mins < 1440) return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+  return new Date(resetsAt).toLocaleString('en-GB', { weekday: 'short', ...clock });
+}
+const LIMIT_WINDOWS = [['session', '5h', '5-hour'], ['weekly', '7d', '7-day']];
+// The chips to show now: a window with no data, or whose reset has passed, is left out.
+export function limitChips(limits, now = Date.now()) {
+  return LIMIT_WINDOWS.flatMap(([key, short, long]) => {
+    const w = limits?.[key];
+    if (!w || !(w.resetsAt > now)) return [];
+    const pct = Math.round(w.used);
+    const full = new Date(w.resetsAt).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', ...clock }).replace(',', '');
+    const when = resetLabel(w.resetsAt, now);
+    const reached = pct >= 100;
+    return [{
+      key, short, pct, level: reached ? 'bad' : pct > 80 ? 'warn' : '', when,
+      text: reached ? `limit reached · resets ${w.resetsAt - now < 864e5 ? new Date(w.resetsAt).toLocaleTimeString('en-GB', clock) : when}` : when,
+      label: `${long} limit: ${pct}% used, resets ${full}`,
+    }];
+  });
 }
 
 export function ago(t) {

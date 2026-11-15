@@ -90,12 +90,13 @@ function listen() {
   const events = new EventSource('/api/events');
   events.onmessage = e => {
     const event = JSON.parse(e.data);
-    if (['voice', 'update-progress', 'update-ready', 'agent-message', 'specialist-changed', 'groups', 'meter'].includes(event.type)) emit(event.type, event);
+    if (['voice', 'update-progress', 'update-ready', 'agent-message', 'specialist-changed', 'groups', 'meter', 'limits'].includes(event.type)) emit(event.type, event);
     else if (loaders[event.type]) refresh(event.type);
   };
   events.onopen = () => {
     live = true;
     Object.keys(loaders).forEach(refresh); // after a reconnect, catch up on everything
+    api('GET', '/api/limits').then(limits => emit('limits', { limits }), () => {});
   };
   events.onerror = () => { live = false; renderStatus(); };
 }

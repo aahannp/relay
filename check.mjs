@@ -11,12 +11,12 @@ import { start, processTree } from './server.mjs';
 import { createWorktree } from './lib/git.mjs';
 import { db, bus, migrate, DEFAULTS as STORE_DEFAULTS } from './lib/store.mjs';
 import * as T from './lib/team.mjs';
-import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose } from './lib/sessions.mjs';
+import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose, deliver, noteLimits, usageLimits } from './lib/sessions.mjs';
 import { THEMES } from './public/js/themes.js';
 import { transcriptContext } from './lib/transcripts.mjs';
 import { priceReply } from './lib/usage.mjs';
 import * as U from './lib/update.mjs';
-import { parseMarkdown, meterView } from './public/js/ui.js';
+import { parseMarkdown, meterView, quoteReply, resetLabel, limitChips } from './public/js/ui.js';
 import { stripDeskCookies } from './lib/cookies.mjs';
 import { randomUUID, createHash } from 'node:crypto';
 
@@ -364,6 +364,20 @@ try {
     assert.deepEqual([70, 71, 90, 91].map(pct => meterView({ ...m, used: pct * 10_000 }).level), ['', 'warn', 'warn', 'bad'], 'amber over 70%, red over 90%');
     assert.match(meterView({ ...m, used: 160_000, effective: 200_000 }).details, /Effective window: 200K[^]*model's is 1M/, 'an auto-compact window smaller than the model\'s is the one that counts');
     assert.deepEqual([meterView({ ...m, cost: 0, unpriced: 3 }).cost, meterView({ ...m, cost: 0 }).cost], ['', '$0.00'], 'no cost shown when nothing could be priced');
+    // Plan limits in the pane header: "2h 10m" under a day, weekday and time beyond, nothing once a window has passed.
+    const t0 = Date.parse('2026-11-15T10:00:00');
+    const at = (mins, w = {}) => ({ used: 42, resetsAt: t0 + mins * 60_000, ...w });
+    assert.deepEqual([resetLabel(t0 + 130 * 60_000, t0), resetLabel(t0 + 45 * 60_000, t0), resetLabel(t0 + 23 * 3_600_000, t0), resetLabel(t0 - 1, t0)], ['2h 10m', '45m', '23h 0m', ''], 'relative under 24 hours, empty once passed');
+    const later = new Date(t0 + 50 * 3_600_000);
+    assert.equal(resetLabel(+later, t0), `${later.toLocaleDateString('en-GB', { weekday: 'short' })} ${String(later.getHours()).padStart(2, '0')}:${String(later.getMinutes()).padStart(2, '0')}`, 'a day or more away: weekday and time');
+    const [five, seven] = limitChips({ session: at(130), weekly: at(50 * 60, { used: 18 }) }, t0);
+    assert.deepEqual([five.short, five.pct, five.text, five.level, seven.short, seven.pct, seven.level], ['5h', 42, '2h 10m', '', '7d', 18, ''], 'a chip per window');
+    assert.match(five.label, /^5-hour limit: 42% used, resets \w{3} 15 Nov 12:10$/, 'the exact reset time for the tooltip and aria-label');
+    assert.deepEqual([81, 80, 100].map(used => limitChips({ session: at(130, { used }) }, t0)[0].level), ['warn', '', 'bad'], 'amber over 80%, red at 100%');
+    assert.match(limitChips({ session: at(130, { used: 100 }) }, t0)[0].text, /^limit reached · resets 12:10$/);
+    assert.equal(limitChips({ weekly: at(50 * 60, { used: 100 }) }, t0)[0].text, `limit reached · resets ${resetLabel(t0 + 50 * 3_600_000, t0)}`, 'a reset over a day away keeps its weekday');
+    assert.match(limitChips({ session: at(130) }, t0)[0].label, /^5-hour/);
+    assert.deepEqual([limitChips({}, t0), limitChips({ session: at(-5) }, t0), limitChips({ session: { used: 5 } }, t0)], [[], [], []], 'no data, a passed window, or no reset time: no chip');
   }
 
   // Resources: a process's usage is its own plus every descendant's, and nothing outside that subtree
@@ -1009,6 +1023,26 @@ esac
       "the meter is pushed over /api/events, against the lead's 400K auto-compact window Relay sets; this transcript's reply names no model, so it's unpriced");
     assert.deepEqual((await ok('GET', '/api/sessions')).find(x => x.id === s.id).meter, pushed.meter, 'and listed with the session, for a page that loads later');
     assert.equal((await ok('GET', '/api/sessions')).find(x => x.id === worker.id).meter, undefined, 'a pane whose status line never reported shows nothing');
+    // The status line's rate_limits are the account's: parsed, kept, pushed once per change, served at /api/limits.
+    const limitEvents = [];
+    const onLimits = e => e.type === 'limits' && limitEvents.push(e.limits);
+    bus.on('event', onLimits);
+    const rl = { five_hour: { used_percentage: 41.6, resets_at: 1_800_000_000 }, seven_day: { used_percentage: 18, resets_at: 1_800_500_000 } };
+    const both = { session: { used: 41.6, resetsAt: 1_800_000_000_000 }, weekly: { used: 18, resetsAt: 1_800_500_000_000 } };
+    assert.equal((await request('POST', '/api/context', { token: s.agentToken, body: { rate_limits: rl } })).status, 200);
+    assert.deepEqual(limitEvents, [both], 'both windows, reset times in ms, pushed');
+    assert.deepEqual(await ok('GET', '/api/limits'), both, 'and served for a page that loads later');
+    noteLimits(rl);
+    noteLimits(undefined);
+    noteLimits({ five_hour: { used_percentage: 'lots' }, seven_day: null });
+    assert.equal(limitEvents.length, 1, 'unchanged, missing or bad values: no new event, nothing lost');
+    noteLimits({ five_hour: { used_percentage: 120, resets_at: 1_800_000_100 } });
+    assert.deepEqual(usageLimits(), { session: { used: 100, resetsAt: 1_800_000_100_000 }, weekly: both.weekly }, 'a report with one window leaves the other as it was; over 100% is capped');
+    noteLimits({ seven_day: { used_percentage: -5 } });
+    assert.deepEqual(usageLimits(), { session: { used: 100, resetsAt: 1_800_000_100_000 }, weekly: { used: 0 } }, 'no reset time: just the percentage');
+    noteLimits({ five_hour: { used_percentage: null, resets_at: 1_800_000_200 }, seven_day: { used_percentage: '' } });
+    assert.deepEqual(usageLimits(), { session: { used: 100, resetsAt: 1_800_000_100_000 }, weekly: { used: 0 } }, 'a null or empty percentage is no data, not 0%');
+    bus.off('event', onLimits);
     fs.appendFileSync(transcript, `${line({ type: 'assistant', message: { content: [{ type: 'text', text: 'Planning the login work' }], usage: { input_tokens: 0, cache_read_input_tokens: 150_000, cache_creation_input_tokens: 0 } } })}\n`);
     await ok('PATCH', '/api/settings', { leadUpkeep: UP });
     assert.equal(effectiveWindow(s), 400_000, "the threshold is a % of the lead's own auto-compact window, 400K");
@@ -1708,6 +1742,86 @@ esac
   assert.deepEqual(db.groups, [], 'and you can');
   assert.equal((await type(asker.id, 'one more', christieId)).status, 429, 'send_to_agent counts toward it too');
   for (const id of [asker.id, christieId]) await ok('DELETE', `/api/sessions/${id}`);
+
+  // Replying to a selection in a pane: the text quoted, then your question, pasted whole and sent, never into a prompt
+  {
+    assert.equal(quoteReply('first  \r\nsecond\n\n  third \n\n', ' Why? '), '> first\n> second\n>\n>   third\n\nWhy?', 'each line quoted, trailing spaces gone, then a blank line and the question');
+    assert.equal(quoteReply('y'.repeat(2500), 'q'), `> ${'y'.repeat(2000)}\n> (1 more line cut)\n\nq`, 'a long selection keeps its first 2,000 characters');
+    assert.equal(quoteReply(`${'z'.repeat(1999)}\nb\nc\nd`, 'q'), `> ${'z'.repeat(1999)}\n> (3 more lines cut)\n\nq`, 'and says how many lines it cut');
+    const replyProj = path.join(tmp, 'reply-proj'); // its own project: the messaging tests above used up repo's message limit
+    fs.mkdirSync(replyProj);
+    const r = await ok('POST', '/api/sessions', { kind: 'agent', agent: 'claude', project: replyProj, name: 'Replier' });
+    await screenOf(r.id, /FAKE-CLAUDE/, 'it has started');
+    const s = sessions.get(r.id);
+    const typed = [];
+    const write = s.pty.write.bind(s.pty);
+    s.pty.write = d => { typed.push(d); write(d); };
+    const paste = text => request('POST', `/api/sessions/${r.id}/input`, { body: { text, paste: true } });
+    const mode = on => new Promise(res => s.term.write(`\x1b[?2004${on ? 'h' : 'l'}`, res));
+    assert.equal((await paste('> a\n> b\n\nwhy\x1b[201~\x03?')).status, 200);
+    await s.inbox;
+    assert.deepEqual(typed.splice(0), ['> a > b why[201~?', '\r'], 'without bracketed paste, the lines are joined, control characters go, then Enter');
+    await mode(true);
+    assert.equal((await paste('> a\n> b\n\nwhy')).status, 200);
+    await s.inbox;
+    assert.deepEqual(typed.splice(0), ['\x1b[200~> a\n> b\n\nwhy\x1b[201~', '\r'], 'with it, one paste of every line, then Enter');
+    s.attention = true; // a permission prompt
+    const refused = await paste('hi');
+    assert.deepEqual([refused.status, refused.body.error], [409, 'Answer the prompt in the pane first'], 'never into a prompt');
+    assert.deepEqual(typed, [], 'nothing typed');
+    s.attention = false;
+    await ok('POST', `/api/sessions/${r.id}/input`, { text: 'as\x01typed\n' });
+    await new Promise(res => setTimeout(res, 300));
+    assert.deepEqual(typed.splice(0), ['as\x01typed\n', '\r'], 'without the flag, what you type goes as it is');
+    // A prompt that shows up while a message waits its turn: the waiting one is dropped, not typed (its Enter would answer it)
+    const showPrompt = () => new Promise(res => s.term.write('\r\n 1. Yes\r\n 2. No\r\n', res));
+    const hidePrompt = () => new Promise(res => s.term.write('moved on\r\n'.repeat(30), res)); // it scrolls away
+    for (const [how, send] of [['a reply', text => paste(text)], ['a message from an agent', async text => deliver(s, text)]]) {
+      let release;
+      s.inbox = new Promise(res => (release = res)); // something else is being typed
+      const waiting = send('second');
+      await new Promise(res => setTimeout(res, 150)); // it's in, and waits its turn
+      await showPrompt();
+      release();
+      const answer = await waiting;
+      await s.inbox;
+      assert.deepEqual(typed, [], `${how} queued before a prompt appeared isn't typed into it`);
+      if (answer) assert.deepEqual([answer.status, answer.body.error], [409, 'A prompt appeared in the pane; answer it first'], 'and you hear so, so the reply box keeps your text');
+      await hidePrompt();
+    }
+    // Ask aside: a prompt that shows up after "/btw " is typed stops the rest
+    s.pty.write = d => { typed.push(d); write(d); if (d === '/btw ') showPrompt(); };
+    const stopped = await request('POST', `/api/sessions/${r.id}/input`, { body: { text: 'why?', paste: true, aside: true } });
+    assert.deepEqual([stopped.status, typed], [409, ['/btw ']], 'ask aside stops before the question and Enter when a prompt shows up after "/btw "');
+    typed.length = 0;
+    s.pty.write = d => { typed.push(d); write(d); };
+    await hidePrompt();
+    s.exited = true;
+    const finished = await paste('hi');
+    assert.deepEqual([finished.status, finished.body.error], [409, 'Replier has finished'], 'a pane that has exited says so, so the box keeps what you typed');
+    s.exited = false;
+    const source = fs.readFileSync(new URL('./public/js/agents.js', import.meta.url), 'utf8');
+    assert.match(source.slice(source.indexOf('function dispose(')).split('\n}')[0], /\.reply-pop\[data-pane=.*close\(\)/, "closing a pane closes its open reply box");
+    // Ask aside: Claude Code's /btw typed as keys, then the quote and question as one paste, then Enter. Only you, only Claude.
+    assert.equal((await request('POST', `/api/sessions/${r.id}/input`, { body: { text: '> a\n> b\n\nwhy?', paste: true, aside: true } })).status, 200);
+    await s.inbox;
+    assert.deepEqual(typed.splice(0), ['/btw ', '\x1b[200~> a\n> b\n\nwhy?\x1b[201~', '\r'], 'ask aside: "/btw " as keys, the rest pasted, then Enter');
+    const peer = await ok('POST', '/api/sessions', { kind: 'agent', agent: 'claude', project: replyProj, name: 'Peer' });
+    const fromPeer = body => request('POST', `/api/sessions/${r.id}/input`, { headers: { 'x-desk-session': peer.id, 'x-desk-via': 'mcp' }, body });
+    for (const body of [{ text: '/btw why?' }, { text: 'why?', paste: true, aside: true }]) assert.equal((await fromPeer(body)).status, 200);
+    await s.inbox;
+    assert.deepEqual(typed.map(t => t.replace('\x1b[200~', '').slice(0, 14)), ['[Message from ', '\r', '[Message from ', '\r'],
+      "an agent's /btw is signed first, so it's no command, and its aside flag is ignored");
+    typed.length = 0;
+    await ok('DELETE', `/api/sessions/${peer.id}`);
+    s.agent = 'codex';
+    assert.equal((await request('POST', `/api/sessions/${r.id}/input`, { body: { text: 'why?', paste: true, aside: true } })).status, 400, 'ask aside is for Claude Code only');
+    s.agent = 'claude';
+    assert.match(source, /const asideBtn = p\.session\.agent === 'claude' && h\('button'/, 'the Ask aside button shows in Claude panes only');
+    await mode(false);
+    s.pty.write = write;
+    await ok('DELETE', `/api/sessions/${r.id}`);
+  }
 
   // Spaces: another project folder answers one question, and nothing else crosses the wall
   {

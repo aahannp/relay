@@ -1,5 +1,5 @@
 // Agents view: every agent, shell and browser pane for the project, tiled in a grid of real terminals.
-import { state, api, h, icon, avatar, on, emit, toast, guard, actions, command, commands, menu, askText, modal, confirmDialog, agentLabel, shortBranch, baseName, copy, chatTitle, meterView, openSpaces, spaceSummary, DRAG, MONO, STATUS_LABEL } from './ui.js';
+import { state, api, h, icon, avatar, on, emit, toast, guard, actions, command, commands, menu, askText, modal, confirmDialog, agentLabel, shortBranch, baseName, copy, quoteReply, chatTitle, meterView, limitChips, openSpaces, spaceSummary, DRAG, MONO, STATUS_LABEL } from './ui.js';
 
 const panes = new Map(); // id -> pane (a session's terminal, or a browser)
 const seen = new Map(); // session id -> last status we told you about
@@ -495,13 +495,14 @@ function terminalPane(s, parent) {
   const sub = h('span', { class: 'pane-sub' });
   const face = h('span', {});
   const meter = h('span', { class: 'meter', role: 'meter', 'aria-label': 'Context and cost', 'aria-valuemin': 0, 'aria-valuemax': 100, tabindex: 0, hidden: true });
+  const limitsEl = h('span', { class: 'limits', hidden: true });
   const host = h('div', { class: 'term-host' });
   const blocks = h('div', { class: 'blocks' });
   const exitBar = h('div', { class: 'exit-bar' });
   const id = s.id;
   const blocksBtn = s.kind === 'shell' && h('button', { class: 'icon-btn', title: 'Command blocks', onClick: () => blocksBtn.classList.toggle('on', el.classList.toggle('show-blocks')) }, icon('list', 15));
   const head = h('div', { class: 'pane-head', draggable: true, title: 'Drag to move this pane', onDragstart: e => dragPane(e, id), onDragend: () => el.classList.remove('dragging'), onDblclick: e => !e.target.closest('button') && toggleMaximise(id) },
-    face, h('div', { class: 'pane-titles' }, title, sub), meter, state_,
+    face, h('div', { class: 'pane-titles' }, title, sub), meter, limitsEl, state_,
     h('div', { class: 'pane-tools' },
       blocksBtn,
       s.chatId && h('button', { class: 'icon-btn', title: 'Name this agent', onClick: () => renameAgent(s) }, icon('pen', 13)),
@@ -520,7 +521,7 @@ function terminalPane(s, parent) {
     term.loadAddon(webgl);
   } catch {}
 
-  const p = { id, kind: 'term', docked: Boolean(parent), el, term, dot, state: state_, stateText, title, sub, face, meter, exitBar, blocksEl: blocks, session: s, lastData: 0, ws: null, size: '' };
+  const p = { id, kind: 'term', docked: Boolean(parent), el, term, dot, state: state_, stateText, title, sub, face, meter, limitsEl, exitBar, blocksEl: blocks, session: s, lastData: 0, ws: null, size: '' };
   p.send = data => p.ws?.readyState === WebSocket.OPEN && p.ws.send(JSON.stringify({ t: 'in', d: data }));
   p.fit = () => {
     if (!host.offsetWidth) return;
@@ -538,10 +539,107 @@ function terminalPane(s, parent) {
   p.peek = smoothScroll(term, host);
   new ResizeObserver(() => p.fit()).observe(host);
   if (s.kind === 'shell') commandBlocks(p);
+  else replyToSelection(p, host);
   connect(p);
   panes.set(id, p);
   layout();
   return p;
+}
+
+// Select text in an agent's pane and ask it about that: a Reply button by the selection, Reply in the right-click menu,
+// or ⌘⇧' (not ⌘⇧R: the View menu's Force Reload takes that first). The question is pasted in quoted, as if typed.
+// Never in a shell, where it would run as a command.
+function replyToSelection(p, host) {
+  const { term } = p;
+  const body = host.parentElement;
+  // The selection's last cell, on the page; null when that row is scrolled out of view.
+  const endCell = () => {
+    const end = term.getSelectionPosition()?.end;
+    const r = host.querySelector('.xterm-screen')?.getBoundingClientRect();
+    const row = end && end.y - term.buffer.active.viewportY;
+    if (!r || !end || row < 0 || row >= term.rows) return null;
+    const w = r.width / term.cols, ht = r.height / term.rows;
+    return { left: r.left + end.x * w, top: r.top + row * ht, bottom: r.top + (row + 1) * ht };
+  };
+  const btn = h('button', { class: 'btn xs primary reply-btn', hidden: true, 'aria-label': 'Reply to selection', title: 'Ask the agent about this (⌘⇧\')',
+    onMousedown: e => e.preventDefault(), onClick: () => open() }, icon('message', 12), 'Reply');
+  body.append(btn);
+  term.onSelectionChange(() => {
+    const c = term.getSelection().trim() && endCell();
+    btn.hidden = !c;
+    if (!c) return;
+    const b = body.getBoundingClientRect();
+    btn.style.left = `${Math.max(4, Math.min(c.left - b.left, b.width - btn.offsetWidth - 6))}px`;
+    btn.style.top = `${Math.min(c.bottom - b.top + 4, b.height - btn.offsetHeight - 6)}px`;
+  });
+  term.onScroll(() => { btn.hidden = true; });
+  term.attachCustomKeyEventHandler(e => {
+    if (e.type !== 'keydown' || !e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey || e.code !== 'Quote' || !term.hasSelection()) return true;
+    e.preventDefault();
+    open();
+    return false;
+  });
+  // There was no right-click menu here: only with a selection, so a right-click without one behaves as before.
+  host.addEventListener('contextmenu', e => {
+    if (!term.getSelection().trim()) return;
+    e.preventDefault();
+    menu({ getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX, bottom: e.clientY - 6 }) }, [
+      { label: 'Reply to selection', icon: 'message', sub: "⌘⇧'", onClick: open },
+      { label: 'Copy', icon: 'copy', sub: '⌘C', onClick: () => copy(term.getSelection()) },
+    ]);
+  });
+
+  function open() {
+    const sel = term.getSelection();
+    if (!sel.trim()) return;
+    btn.hidden = true;
+    document.querySelector('.reply-pop')?.close();
+    const at = endCell() ?? (r => ({ left: r.left + 24, bottom: r.top + r.height / 3 }))(host.getBoundingClientRect());
+    const input = h('textarea', { class: 'input', rows: 2, placeholder: 'Ask about this…', 'aria-label': 'Your question about the selected text' });
+    const err = h('div', { class: 'reply-err', role: 'alert' });
+    const sendBtn = h('button', { class: 'btn xs primary', title: 'Reply (Enter)', onClick: () => send() }, icon('send', 12), 'Send');
+    // Claude Code's /btw: answered in an overlay in its pane, from the conversation, without joining it.
+    const asideBtn = p.session.agent === 'claude' && h('button', { class: 'btn xs reply-aside', title: "Ask without adding to the agent's conversation (⌘Enter)", onClick: () => send(true) }, 'Ask aside');
+    const pop = h('div', { class: 'reply-pop', 'data-pane': p.id, role: 'dialog', 'aria-label': `Reply to ${chatTitle(p.session)} about the selected text` },
+      h('div', { class: 'reply-quote', tabindex: 0, 'aria-label': 'Selected text' }, sel.replace(/\s+$/, '')),
+      input, err,
+      h('div', { class: 'reply-row' },
+        h('span', { class: 'reply-hint' }, asideBtn ? '⏎ send · ⌘⏎ ask aside · ⇧⏎ new line' : 'Enter to send · Shift+Enter for a new line'),
+        h('button', { class: 'btn xs', onClick: () => close() }, 'Cancel'), asideBtn, sendBtn));
+    const outside = e => !pop.contains(e.target) && close(false);
+    function close(refocus = true) {
+      pop.remove();
+      document.removeEventListener('mousedown', outside, true);
+      if (refocus) term.focus();
+    }
+    pop.close = () => close(false);
+    async function send(aside = false) {
+      if (!input.value.trim()) return input.focus();
+      if (!asideBtn) aside = false;
+      sendBtn.disabled = true;
+      if (asideBtn) asideBtn.disabled = true;
+      err.textContent = '';
+      try {
+        await api('POST', `/api/sessions/${p.id}/input`, { text: quoteReply(sel, input.value), paste: true, aside });
+        term.clearSelection();
+        close();
+      } catch (e) {
+        err.textContent = e.message; // what you typed stays, to send once you've answered the prompt
+        sendBtn.disabled = false;
+        if (asideBtn) asideBtn.disabled = false;
+        input.focus();
+      }
+    }
+    pop.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+      else if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.isComposing && e.target === input) { e.preventDefault(); send(e.metaKey); }
+    });
+    document.body.append(pop);
+    pop.style.left = `${Math.max(8, Math.min(at.left - 24, innerWidth - pop.offsetWidth - 8))}px`;
+    pop.style.top = `${Math.max(8, Math.min(at.bottom + 6, innerHeight - pop.offsetHeight - 8))}px`;
+    document.addEventListener('mousedown', outside, true);
+    input.focus();
+  }
 }
 
 // Each (re)connect gets a fresh copy of the screen from the server, so clear before drawing it.
@@ -580,6 +678,20 @@ on('meter', e => {
   if (p?.kind === 'term') renderMeter(p);
 });
 
+// Your plan's 5-hour and 7-day limits, account-wide, in every Claude pane's header: "5h 42% · 2h 10m". One copy of
+// the data and one minute timer for the page, as the relative time counts down and a window past its reset goes.
+let planLimits = {};
+function renderLimits(p) {
+  const chips = p.session.kind === 'shell' ? [] : limitChips(planLimits);
+  p.limitsEl.hidden = !chips.length;
+  p.limitsEl.replaceChildren(...chips.map(c => h('span', { class: `limit limit-${c.key} ${c.level}`, role: 'group', tabindex: 0, title: c.label, 'aria-label': c.label },
+    h('span', { class: 'limit-name' }, c.short), h('span', { class: 'limit-pct' }, ` ${c.pct}%`), c.text && h('span', { class: 'limit-when' }, ` · ${c.text}`))));
+}
+const renderAllLimits = () => panes.forEach(p => p.kind === 'term' && renderLimits(p));
+on('limits', e => { planLimits = e.limits ?? {}; renderAllLimits(); });
+api('GET', '/api/limits').then(l => { planLimits = l ?? {}; renderAllLimits(); }, () => {});
+setInterval(renderAllLimits, 60_000);
+
 function renderHead(p) {
   const s = p.session;
   p.title.textContent = chatTitle(s);
@@ -592,6 +704,7 @@ function renderHead(p) {
     s.taskId && h('button', { title: 'Open the task', onClick: () => actions.openTask?.(s.taskId) }, 'task'),
   ].filter(Boolean));
   renderMeter(p);
+  renderLimits(p);
   p.el.classList.toggle('exited', s.exited);
   p.el.classList.toggle('attn', s.status === 'needs-input');
   if (s.exited && !p.exitBar.childElementCount) {
@@ -684,6 +797,7 @@ function dispose(id) {
   panes.delete(id);
   hidden.delete(id);
   if (p.ws) { p.ws.onclose = null; p.ws.close(); }
+  document.querySelector(`.reply-pop[data-pane="${id}"]`)?.close(); // a reply box left open for it
   p.term?.dispose();
   p.peek?.dispose();
   if (p.el.classList.contains('max')) unmaximise();
