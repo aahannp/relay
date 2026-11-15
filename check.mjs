@@ -1144,7 +1144,7 @@ esac
     await screenOf(fresh.id, new RegExp(`taking over as lead from Hand Lead.*Read the handoff first: ${file.replace(/[.]/g, '\\.')}`), 'its prompt points at the doc');
     assert.equal(sessions.get(worker.id).startedBy.id, fresh.id, 'its workers now report to the new lead');
     assert.equal(sessions.get(late.id).startedBy.id, fresh.id, 'one it started while the new lead was settling too');
-    assert.match(fs.readFileSync(new URL('./public/js/app.js', import.meta.url), 'utf8'), /'handoff', 'lead-upkeep'\]\.includes\(event\.type\)/, 'the page passes on handoff and lead upkeep events, for their toasts');
+    assert.match(fs.readFileSync(new URL('./public/js/app.js', import.meta.url), 'utf8'), /'handoff', 'lead-upkeep'[^\]]*\]\.includes\(event\.type\)/, 'the page passes on handoff and lead upkeep events, for their toasts');
     await screenOf(peer.id, new RegExp(`Hand Lead handed off: a fresh Hand Lead \\(agent ${fresh.id}\\)`), 'the other lead is told');
     assert.equal(db.chats.find(c => c.id === lead.chatId)?.replacedBy, fresh.chatId, "the old chat stays, marked replaced");
     bus.off('event', onStep);
