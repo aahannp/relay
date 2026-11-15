@@ -574,8 +574,22 @@ function terminalPane(s, parent) {
 function replyToSelection(p, host) {
   const { term } = p;
   const body = host.parentElement;
+  // Full screen, Claude Code reads the mouse, so a drag is its own selection and xterm has none. It sends the text
+  // as OSC 52 when you let go: while the program has the mouse, that is the selection. A new click or a key drops it.
+  let picked = '';
+  let upAt = null;
+  const selected = () => (term.modes.mouseTrackingMode === 'none' ? term.getSelection() : picked);
+  term.parser.registerOscHandler(52, data => {
+    try { picked = new TextDecoder().decode(Uint8Array.from(atob(data.slice(data.indexOf(';') + 1)), c => c.charCodeAt(0))); } catch { return false; }
+    place();
+    return true;
+  });
+  host.addEventListener('mousedown', e => { if (e.button === 0 && picked) { picked = ''; place(); } }, true);
+  host.addEventListener('mouseup', e => { upAt = { left: e.clientX, top: e.clientY, bottom: e.clientY + 4 }; }, true);
+  term.onKey(() => { if (picked) { picked = ''; place(); } });
   // The selection's last cell, on the page; null when that row is scrolled out of view.
   const endCell = () => {
+    if (term.modes.mouseTrackingMode !== 'none') return picked ? upAt : null;
     const end = term.getSelectionPosition()?.end;
     const r = host.querySelector('.xterm-screen')?.getBoundingClientRect();
     const row = end && end.y - term.buffer.active.viewportY;
@@ -586,33 +600,35 @@ function replyToSelection(p, host) {
   const btn = h('button', { class: 'btn xs primary reply-btn', hidden: true, 'aria-label': 'Reply to selection', title: 'Ask the agent about this (⌘⇧\')',
     onMousedown: e => e.preventDefault(), onClick: () => open() }, icon('message', 12), 'Reply');
   body.append(btn);
-  term.onSelectionChange(() => {
-    const c = term.getSelection().trim() && endCell();
+  function place() {
+    const c = selected().trim() && endCell();
     btn.hidden = !c;
     if (!c) return;
     const b = body.getBoundingClientRect();
     btn.style.left = `${Math.max(4, Math.min(c.left - b.left, b.width - btn.offsetWidth - 6))}px`;
     btn.style.top = `${Math.min(c.bottom - b.top + 4, b.height - btn.offsetHeight - 6)}px`;
-  });
+  }
+  term.onSelectionChange(place);
   term.onScroll(() => { btn.hidden = true; });
   term.attachCustomKeyEventHandler(e => {
-    if (e.type !== 'keydown' || !e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey || e.code !== 'Quote' || !term.hasSelection()) return true;
+    if (e.type !== 'keydown' || !e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey || e.code !== 'Quote' || !selected().trim()) return true;
     e.preventDefault();
     open();
     return false;
   });
   // There was no right-click menu here: only with a selection, so a right-click without one behaves as before.
   host.addEventListener('contextmenu', e => {
-    if (!term.getSelection().trim()) return;
+    const text = selected();
+    if (!text.trim()) return;
     e.preventDefault();
     menu({ getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX, bottom: e.clientY - 6 }) }, [
       { label: 'Reply to selection', icon: 'message', sub: "⌘⇧'", onClick: open },
-      { label: 'Copy', icon: 'copy', sub: '⌘C', onClick: () => copy(term.getSelection()) },
+      { label: 'Copy', icon: 'copy', sub: '⌘C', onClick: () => copy(text) },
     ]);
   });
 
   function open() {
-    const sel = term.getSelection();
+    const sel = selected();
     if (!sel.trim()) return;
     btn.hidden = true;
     document.querySelector('.reply-pop')?.close();
@@ -644,6 +660,7 @@ function replyToSelection(p, host) {
       try {
         await api('POST', `/api/sessions/${p.id}/input`, { text: quoteReply(sel, input.value), paste: true, aside });
         term.clearSelection();
+        picked = '';
         close();
       } catch (e) {
         err.textContent = e.message; // what you typed stays, to send once you've answered the prompt

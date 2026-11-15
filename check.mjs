@@ -1919,6 +1919,68 @@ esac
     s.exited = false;
     const source = fs.readFileSync(new URL('./public/js/agents.js', import.meta.url), 'utf8');
     assert.match(source.slice(source.indexOf('function dispose(')).split('\n}')[0], /\.reply-pop\[data-pane=.*close\(\)/, "closing a pane closes its open reply box");
+    // In the window, with the mouse: Claude Code full screen reads the mouse, so a drag is its own selection, which it
+    // sends as OSC 52 on release, and xterm has none. Drag, right-click, Reply to selection: the box quotes that text.
+    {
+      const ui = path.join(tmp, 'ui');
+      fs.mkdirSync(path.join(ui, 'bin'), { recursive: true });
+      fs.mkdirSync(path.join(ui, 'proj'));
+      fs.writeFileSync(path.join(ui, 'bin', 'claude'), `#!/usr/bin/env node
+process.stdin.setRawMode(true);
+process.stdout.write('\\x1b[?1049h\\x1b[?1000h\\x1b[?1002h\\x1b[?1006h\\x1b[2J\\x1b[Hpick me out of this line\\r\\n');
+process.stdin.on('data', d => /\\x1b\\[<0;\\d+;\\d+m/.test(d) && process.stdout.write('\\x1b]52;c;' + Buffer.from('pick me').toString('base64') + '\\x07'));
+`, { mode: 0o755 });
+      fs.writeFileSync(path.join(ui, 'main.mjs'), `import { app, BrowserWindow } from 'electron';
+const env = process.env;
+app.setPath('userData', env.UI_DIR + '/ud');
+const wait = ms => new Promise(r => setTimeout(r, ms));
+app.whenReady().then(async () => {
+  const out = {};
+  try {
+    const { start } = await import(env.SERVER);
+    const srv = await start({ port: 0, dataDir: env.UI_DIR + '/data' });
+    const api = (m, u, b) => fetch(new URL(u, srv.url), { method: m, headers: { 'content-type': 'application/json', 'x-desk-token': srv.token }, body: JSON.stringify(b) });
+    await api('POST', '/api/projects', { path: env.UI_DIR + '/proj' });
+    await api('POST', '/api/sessions', { kind: 'agent', agent: 'claude', project: env.UI_DIR + '/proj', name: 'Mouse' });
+    const win = new BrowserWindow({ width: 1300, height: 850, show: false });
+    const url = new URL(srv.url); url.searchParams.set('project', env.UI_DIR + '/proj');
+    await win.loadURL(url.href);
+    const js = c => win.webContents.executeJavaScript(c);
+    const until = async c => { for (let i = 0; i < 100; i++) { const v = await js(c); if (v) return v; await wait(100); } throw new Error('timed out: ' + c); };
+    const r = await until('document.querySelector(".xterm.enable-mouse-events .xterm-screen")?.getBoundingClientRect().toJSON()');
+    await wait(300);
+    const send = e => win.webContents.sendInputEvent(e);
+    const y = Math.round(r.top + 8);
+    send({ type: 'mouseDown', x: Math.round(r.left + 2), y, button: 'left', clickCount: 1 });
+    for (let x = r.left + 2; x <= r.left + 60; x += 10) { send({ type: 'mouseMove', x: Math.round(x), y, button: 'left', modifiers: ['leftButtonDown'] }); await wait(20); }
+    send({ type: 'mouseUp', x: Math.round(r.left + 60), y, button: 'left', clickCount: 1 });
+    out.button = await until('[...document.querySelectorAll(".reply-btn")].some(b => !b.hidden)').catch(() => false);
+    send({ type: 'mouseDown', x: Math.round(r.left + 30), y, button: 'right', clickCount: 1 });
+    send({ type: 'mouseUp', x: Math.round(r.left + 30), y, button: 'right', clickCount: 1 });
+    const item = await until('(b => b && (r => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 }))(b.getBoundingClientRect()))([...document.querySelectorAll(".menu .menu-item")].find(b => b.textContent.includes("Reply to selection")))').catch(() => null);
+    if (item) {
+      send({ type: 'mouseDown', x: Math.round(item.x), y: Math.round(item.y), button: 'left', clickCount: 1 });
+      send({ type: 'mouseUp', x: Math.round(item.x), y: Math.round(item.y), button: 'left', clickCount: 1 });
+      out.quote = await until('document.querySelector(".reply-pop .reply-quote")?.textContent').catch(() => null);
+    }
+    out.menu = Boolean(item);
+    srv.close?.();
+  } catch (e) { out.error = String(e.stack || e); }
+  console.log('UI-RESULT ' + JSON.stringify(out));
+  app.exit(0);
+});
+`);
+      const electron = (await import('electron')).default;
+      const env = { ...process.env, UI_DIR: ui, SERVER: new URL('./server.mjs', import.meta.url).href, PATH: `${path.join(ui, 'bin')}:${process.env.PATH}`, CLAUDE_CONFIG_DIR: path.join(ui, 'claude-home') };
+      const result = await new Promise((resolve, reject) => {
+        const child = spawn(electron, [path.join(ui, 'main.mjs')], { env, stdio: ['ignore', 'pipe', 'ignore'] });
+        let text = '';
+        child.stdout.on('data', d => (text += d));
+        const timer = setTimeout(() => child.kill(), 60_000);
+        child.on('exit', () => { clearTimeout(timer); const line = text.split('\n').find(l => l.startsWith('UI-RESULT ')); line ? resolve(JSON.parse(line.slice(10))) : reject(new Error(`no result from the window: ${text}`)); });
+      });
+      assert.deepEqual(result, { button: true, menu: true, quote: 'pick me' }, "a full-screen agent's own selection: the Reply button shows, and right-click → Reply to selection opens the box quoting it");
+    }
     // Ask aside: Claude Code's /btw typed as keys, then the quote and question as one paste, then Enter. Only you, only Claude.
     assert.equal((await request('POST', `/api/sessions/${r.id}/input`, { body: { text: '> a\n> b\n\nwhy?', paste: true, aside: true } })).status, 200);
     await s.inbox;
