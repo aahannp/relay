@@ -441,6 +441,28 @@
   .ty i::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--w); border-radius: 3px; background: var(--t-dim); }
   .ty b { font-weight: 600; text-align: right; }
   .sample { margin: 0; color: var(--t-dim); font-size: 11px; }
+  .lim { flex: none; padding: 1px 7px; border: 1px solid var(--t-line); border-radius: 99px; color: var(--t-dim); font: 600 10.5px var(--sans); white-space: nowrap; }
+  .rpmock { padding: 14px 14px 10px; }
+  .rpmock .pane { position: relative; height: 300px; }
+  .rpmock .log { user-select: text; outline: 0; }
+  .rpmock .own mark { background: none; }
+  .rpmock mark, .rpmock ::selection { background: color-mix(in srgb, var(--t-accent) 32%, transparent); color: inherit; }
+  .rpmock li.q { margin-top: 6px; color: var(--t-dim); white-space: pre-wrap; }
+  .rpmock li.q::before { content: none; }
+  .rpmock li.aside { margin-top: 6px; padding: 6px 8px; border: 1px dashed var(--t-line); border-radius: 7px; }
+  .rpmock li.aside::before { content: none; }
+  .rpmock li.aside small { display: block; color: var(--t-dim); font-size: 10.5px; }
+  .rpbtn, .rpbox button { min-height: 26px; padding: 0 10px; border: 1px solid var(--t-line); border-radius: 6px; background: var(--t-pane); color: var(--t-text); font: 500 11.5px var(--sans); cursor: pointer; }
+  .rpbtn { position: absolute; z-index: 2; box-shadow: 0 6px 16px -6px rgb(0 0 0 / .5); }
+  .rpbtn[hidden], .rpbox[hidden] { display: none; }
+  .rpbtn:hover, .rpbox button:hover { border-color: var(--t-accent); }
+  .rpbox button[type="submit"] { border-color: transparent; background: var(--t-btn); color: #fff; }
+  .rpbox { display: grid; gap: 6px; margin: 0 8px 8px; padding: 8px; border: 1px solid var(--t-accent); border-radius: 8px; }
+  .rpbox blockquote { margin: 0; padding-left: 8px; border-left: 2px solid var(--t-line); color: var(--t-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rpbox input { min-width: 0; padding: 2px 0; border: 0; outline: 0; background: none; color: var(--t-text); font: inherit; }
+  .rpbox input::placeholder { color: var(--t-dim); }
+  .rpbox div { display: flex; gap: 6px; }
+  .rphint { margin-top: 8px; }
   .amock { display: grid; grid-template-columns: 200px minmax(0, 1fr); font: 12.5px/1.45 var(--sans); }
   .alist { display: grid; align-content: start; gap: 3px; padding: 12px; border-right: 1px solid var(--t-line); }
   .afolds { display: grid; gap: 3px; }
@@ -648,6 +670,7 @@
       <a href="#demo">Demo</a>
       <a href="#why">Why Relay</a>
       <a href="#features">Features</a>
+      <a href="team.html">Team</a>
       <a href="#review">Review</a>
       <a href="#themes">Themes</a>
       <a href="#privacy">Privacy</a>
@@ -875,7 +898,7 @@ test('two of a product add up', async () =&gt; {
           <li class="reveal"><h3>Awareness</h3><p><span class="vs-k">Several terminals</span>Each session only knows what you paste into it.</p><p><span class="vs-k">Relay</span>Before each turn, an agent hears what changed around it, in a few lines. It gets a "Heads up" when another agent edited the same file.</p></li>
           <li class="reveal"><h3>Status</h3><p><span class="vs-k">Several terminals</span>You click through tabs to see who's done.</p><p><span class="vs-k">Relay</span>One grid shows who's working, idle or needs you, and a notification tells you when one does.</p></li>
           <li class="reveal"><h3>Review</h3><p><span class="vs-k">Several terminals</span>You find each branch and diff it yourself.</p><p><span class="vs-k">Relay</span>Every worker's diff is in one Review tab. You merge or discard.</p></li>
-          <li class="reveal"><h3>Cost</h3><p><span class="vs-k">Several terminals</span>You run <span class="mono">/cost</span> in each session.</p><p><span class="vs-k">Relay</span>Each Claude pane shows its context and cost so far. Spend keeps the history.</p></li>
+          <li class="reveal"><h3>Cost</h3><p><span class="vs-k">Several terminals</span>You run <span class="mono">/cost</span> in each session.</p><p><span class="vs-k">Relay</span>Each Claude pane shows its context, its cost so far, and how much of your 5-hour and 7-day plan limits is used. Spend keeps the history.</p></li>
           <li class="reveal"><h3>Who did what</h3><p><span class="vs-k">Several terminals</span>You keep track in your head.</p><p><span class="vs-k">Relay</span>The Graph shows who started whom and who messaged whom.</p></li>
           <li class="reveal"><h3>Other projects</h3><p><span class="vs-k">Several terminals</span>You carry context between repos yourself.</p><p><span class="vs-k">Relay</span>Each project folder is a space. An agent can ask another folder a question, and that folder's lead answers.</p></li>
           <li class="reveal"><h3>The agent</h3><p><span class="vs-k">Several terminals</span>The <span class="mono">claude</span> CLI with your login.</p><p><span class="vs-k">Relay</span>The same <span class="mono">claude</span> CLI with your login and plan. Nothing new to learn.</p></li>
@@ -895,7 +918,7 @@ test('two of a product add up', async () =&gt; {
           <div class="text">
             <span class="kicker">Lead agent and Board</span>
             <h3>Give it a goal. Watch it split the work.</h3>
-            <p>The lead writes tasks on a shared board and starts a worker for each one. Agents comment on their cards and move them to Review when they're done.</p>
+            <p>The lead writes tasks on a shared board and starts a worker for each one. Agents comment on their cards and move them to Review when they're done. Every move leaves a note saying who made it.</p>
           </div>
           <div class="pic"><div class="desk mock bmock" role="group" aria-label="Board demo"><div class="board"><div class="col"><h3><i class="dot" style="--c: var(--t-dim)"></i>To do <span class="n">2</span></h3><ol aria-label="To do"><li class="card" draggable="true"><button type="button" class="t" aria-pressed="false">Product search</button><span class="tag">Claude Code</span><span class="chip">⑂ search</span><button type="button" class="run" aria-label="Run Product search"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 0l9 5-9 5z" fill="currentColor"/></svg><span>Run</span></button></li><li class="card" draggable="true"><button type="button" class="t" aria-pressed="false">Order email</button><span class="tag">Codex</span><span class="chip">⑂ order-email</span><button type="button" class="run" aria-label="Run Order email"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 0l9 5-9 5z" fill="currentColor"/></svg><span>Run</span></button></li></ol></div><div class="col"><h3><i class="dot" style="--c: var(--t-accent)"></i>In progress <span class="n">2</span></h3><ol aria-label="In progress"><li class="card" draggable="true"><button type="button" class="t" aria-pressed="false">Wishlist page</button><span class="tag">Claude Code</span><span class="chip">⑂ wishlist-ui</span><button type="button" class="run" aria-label="Run Wishlist page"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 0l9 5-9 5z" fill="currentColor"/></svg><span>Run</span></button></li><li class="card" draggable="true"><button type="button" class="t" aria-pressed="false">Wishlist tests</button><span class="tag">Claude Code</span><span class="chip">⑂ wish-tests</span><button type="button" class="run" aria-label="Run Wishlist tests"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 0l9 5-9 5z" fill="currentColor"/></svg><span>Run</span></button></li></ol></div><div class="col"><h3><i class="dot" style="--c: var(--t-text)"></i>Review <span class="n">1</span></h3><ol aria-label="Review"><li class="card" draggable="true"><button type="button" class="t" aria-pressed="false">Wishlist API</button><span class="tag">Claude Code</span><span class="chip">⑂ wish-api</span><button type="button" class="run" aria-label="Run Wishlist API"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 0l9 5-9 5z" fill="currentColor"/></svg><span>Run</span></button></li></ol></div><div class="col"><h3><i class="dot" style="--c: var(--t-dim)"></i>Done <span class="n">1</span></h3><ol aria-label="Done"><li class="card" draggable="true"><button type="button" class="t" aria-pressed="false">Fix cart rounding</button><span class="tag">Gemini CLI</span><span class="chip">⑂ rounding</span><button type="button" class="run" aria-label="Run Fix cart rounding"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 0l9 5-9 5z" fill="currentColor"/></svg><span>Run</span></button></li></ol></div></div><p class="sample bhint" aria-live="polite">Drag a card to a column, or click it and then a column. Arrow keys move a focused card.</p></div></div>
         </article>
@@ -955,13 +978,37 @@ test('two of a product add up', async () =&gt; {
               <div class="apage" hidden><small>Notes · rounding</small><h5>Cart rounding fix</h5><p>Why cart totals were off by a cent, and what changed.</p><table><tr><td>Cause</td><td>Float maths on prices</td></tr><tr><td>Fix</td><td>Prices kept in cents</td></tr><tr><td>Tests</td><td>6 added, all pass</td></tr><tr><td>Branch</td><td>rounding</td></tr></table></div></div>
           </div></div>
         </article>
+        <article class="tile full reveal">
+          <div class="text">
+            <span class="kicker">Reply and Ask aside</span>
+            <h3>Point at a line. Ask about it.</h3>
+            <p>Select text in an agent's pane and click Reply. The agent gets those lines as a quote, then your question. Ask aside sends it as Claude Code's <span class="mono">/btw</span>: you get an answer, and the agent's conversation stays as it was. The pane header shows how much of your 5-hour and 7-day plan limits you've used.</p>
+          </div>
+          <div class="pic"><div class="desk mock rpmock" role="group" aria-label="Reply to a selection demo">
+            <div class="pane">
+              <header><i class="av" style="--av: #636366">C</i><b>Wishlist API</b><small>Claude Code / wishlist-api</small><span class="lim" title="5-hour limit · resets 4:10 pm">5h 42%<span class="sr-only"> of the 5-hour limit used, resets 4:10 pm</span></span><span class="lim" title="7-day limit · resets Fri 9:00 am">7d 18%<span class="sr-only"> of the 7-day limit used, resets Friday 9:00 am</span></span></header>
+              <ol class="log" tabindex="-1" aria-label="Wishlist API's terminal">
+                <li><b>Write</b>(src/api/wishlist.js)<span>⎿ Wrote 28 lines</span></li>
+                <li><b>Bash</b>(node --test)<span>⎿ pass 6  fail 0</span></li>
+                <li>Done. <mark>Wishlists are kept in memory for now</mark>, so a restart empties them.</li>
+              </ol>
+              <button type="button" class="rpbtn">Reply</button>
+              <form class="rpbox" hidden>
+                <blockquote></blockquote>
+                <input aria-label="Your question about the selected text" placeholder="Ask about this, then press Enter" maxlength="120" autocomplete="off" spellcheck="false" enterkeyhint="send">
+                <div><button type="submit">Reply</button><button type="button" data-aside>Ask aside</button></div>
+              </form>
+            </div>
+            <p class="sample rphint" aria-live="polite">Select any text in the pane, then click Reply.</p>
+          </div></div>
+        </article>
       </div>
 
       <div class="minis left">
         <div class="mini reveal">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>
           <h3>A team of specialists</h3>
-          <p>An architect, a reviewer, a debugger, a tester, a code finder, a frontend expert and a learning coach, each on its own model. The read-only ones can't edit files. Add your own.</p>
+          <p>An architect, a reviewer, a debugger, a tester, a code finder, a frontend expert, a learning coach, a critic and a strategist, each on its own model, from Haiku up to Fable. The read-only ones can't edit files. Add your own. <a href="team.html">Meet the team ›</a></p>
         </div>
         <div class="mini reveal">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -1002,6 +1049,21 @@ test('two of a product add up', async () =&gt; {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21V8l9-5 9 5v13M9 21v-6h6v6"/></svg>
           <h3>Spaces</h3>
           <p>Agents can't read another folder's chats, but can ask it a question with <span class="mono">ask_space</span>. Awareness and spaces each have a Settings toggle.</p>
+        </div>
+        <div class="mini reveal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          <h3>Hand off a lead</h3>
+          <p>When a lead's chat gets long, one click has it write a handoff note, starts a fresh lead with that note, and closes the old one.</p>
+        </div>
+        <div class="mini reveal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M10 9v6M14 9v6"/></svg>
+          <h3>Messages that wait</h3>
+          <p>If an agent is showing a permission prompt, Relay holds a message instead of letting it answer the prompt by accident, and marks the pane as needing you.</p>
+        </div>
+        <div class="mini reveal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 6l-6 6 6 6M14 6l6 6-6 6"/></svg>
+          <h3>Back and forward</h3>
+          <p>⌘[ and ⌘] step through where you've been: views, panes, tasks, files and diffs, as in VS Code.</p>
         </div>
       </div>
     </div>
@@ -1076,8 +1138,8 @@ test('two of a product add up', async () =&gt; {
 
   <section id="themes" class="alt center">
     <div class="wrap">
-      <h2 class="reveal">Sixteen themes. Every pane follows.</h2>
-      <p class="lede reveal">Ten dark, six light, the same palettes as the app. Pick one and watch both panes repaint, just as open panes do in Relay.</p>
+      <h2 class="reveal">Eighteen themes. Every pane follows.</h2>
+      <p class="lede reveal">Eleven dark, seven light, the same palettes as the app, now with T3 Dark and T3 Light. Pick one and watch both panes repaint, just as open panes do in Relay.</p>
       <div class="swatches" id="swatches" role="radiogroup" aria-label="App theme">
         <div data-g="dark"><span>Dark</span></div>
         <div data-g="light"><span>Light</span></div>
@@ -1141,7 +1203,9 @@ test('two of a product add up', async () =&gt; {
             <li>Review: diffs, commit, merge, discard</li>
             <li>Agents that message, read and copy each other</li>
             <li>Restoring chats, shells, hidden and maximised panes <small>(since 1.9.11)</small></li>
-            <li>Workers that report back and close; seven specialists <small>(since 1.9.12)</small></li>
+            <li>Workers that report back and close; built-in specialists <small>(since 1.9.12)</small></li>
+            <li>Reply to a selection, Ask aside, plan limits in each pane <small>(since 1.10.7)</small></li>
+            <li>Folder access kept across updates, one-click lead handoff <small>(since 1.10.8)</small></li>
             <li>Workspace awareness, spaces, more windows and hiding a pane <small>(since 1.9.4)</small></li>
             <li>Graph, Spend, Files, Artifacts, themes, update check</li>
             <li>Token meter on each Claude pane, workers on Sonnet <small>(since 1.8.3)</small></li>
@@ -1182,7 +1246,7 @@ test('two of a product add up', async () =&gt; {
             <tbody>
               <tr><td>Mac with Apple silicon</td><td>Required</td><td>Apple silicon. There's no Intel download.</td></tr>
               <tr><td>macOS 13 or later</td><td>Required (<a href="https://www.electronjs.org/blog/electron-44-0">Electron 44's minimum</a>)</td><td>macOS 26.4</td></tr>
-              <tr><td>Claude Code <code>claude</code></td><td>Required</td><td>2.1.308</td></tr>
+              <tr><td>Claude Code <code>claude</code></td><td>Required</td><td>2.1.325</td></tr>
               <tr><td>Codex CLI <code>codex</code></td><td>Optional</td><td>0.146.0</td></tr>
               <tr><td>Gemini CLI <code>gemini</code></td><td>Optional</td><td>Supported, not tested</td></tr>
               <tr><td>Cursor Agent <code>cursor-agent</code></td><td>Optional</td><td>Supported, not tested</td></tr>
@@ -1204,7 +1268,7 @@ test('two of a product add up', async () =&gt; {
         </details>
         <details name="faq" id="notarize">
           <summary>macOS says Relay can't be opened / not verified</summary>
-          <p>That's expected on first launch. Relay is open source and unsigned, because it isn't enrolled in Apple's developer program yet, so macOS can't verify who made it. Either of these fixes it:</p>
+          <p>That's expected on first launch. Relay is open source and signed with its own certificate, not Apple's, because it isn't enrolled in Apple's developer program yet, so macOS can't verify who made it. Either of these fixes it:</p>
           <ol class="steps">
             <li>Click Done, open System Settings → Privacy &amp; Security, scroll down and click <b>Open Anyway</b> next to Relay, then confirm.</li>
             <li>Or run this in Terminal:<div class="cmd"><code>xattr -dr com.apple.quarantine "/Applications/Relay.app"</code><button type="button" class="copy">Copy</button></div></li>
@@ -1218,6 +1282,7 @@ test('two of a product add up', async () =&gt; {
           <summary>How does it update?</summary>
           <p>The version pill next to the logo checks GitHub releases. When a newer one is out it says Update, and one click downloads the new .dmg to your Downloads folder. If GitHub's API is rate-limited, as it can be on a shared office network, it falls back to the release page (since 1.9.10). If an older version shows a rate-limit error, download the latest by hand once.</p>
           <p>With Update automatically on in Settings (the default), the Mac app downloads the new version in the background, checks its SHA-256, and installs it when you quit Relay, or when you click Restart to update. It never restarts on its own. If macOS blocks it, allow Relay in System Settings › Privacy &amp; Security › App Management.</p>
+          <p>Since 1.10.8 every build is signed with the same certificate, so macOS keeps the folders you let Relay open, like Desktop and Documents, across updates. Allow them once more after installing 1.10.8.</p>
         </details>
         <details name="faq">
           <summary>Can I build it myself, or run it on an Intel Mac?</summary>
@@ -1265,6 +1330,7 @@ test('two of a product add up', async () =&gt; {
     <div class="row">
       <span>Relay · MIT licence</span>
       <nav aria-label="Footer">
+        <a href="team.html">Team</a>
         <a href="https://github.com/aahannp/relay">GitHub</a>
         <a href="https://github.com/aahannp/relay/releases">Releases</a>
         <a href="https://github.com/aahannp/relay/issues">Issues</a>
@@ -1339,8 +1405,10 @@ test('two of a product add up', async () =&gt; {
     return select;
   }
 
-  // The app's 16 themes (public/js/themes.js): name, dark, bg, panel, line, text, dim, accent, red, green, yellow, blue.
+  // The app's 18 themes (public/js/themes.js): name, dark, bg, panel, line, text, dim, accent, red, green, yellow, blue.
   const THEMES = [
+    ['T3 Dark', 1, '#0a0a0a', '#111111', '#1f1f1f', '#f5f5f5', '#818181', '#346bf1', '#ff6467', '#00d492', '#ffb900', '#346bf1'],
+    ['T3 Light', 0, '#fcfcfc', '#ffffff', '#e4e4e7', '#27272a', '#71717b', '#155dfc', '#c10007', '#007a55', '#bb4d00', '#1b4ed8'],
     ['Midnight', 1, '#0b0c10', '#12141a', '#252a36', '#e8eaf0', '#8b91a3', '#ff3ea5', '#ff5c7a', '#4ade80', '#fbbf24', '#60a5fa'],
     ['Tokyo Night', 1, '#1a1b26', '#1f2030', '#2f3549', '#c0caf5', '#7a82a8', '#7aa2f7', '#f7768e', '#9ece6a', '#e0af68', '#7aa2f7'],
     ['Catppuccin', 1, '#1e1e2e', '#232334', '#363a4f', '#cdd6f4', '#9399b2', '#cba6f7', '#f38ba8', '#a6e3a1', '#f9e2af', '#89b4fa'],
@@ -2154,6 +2222,50 @@ test('two of a product add up', async () =&gt; {
     dnd(amock, '.aitem', '.afold', (a, f) => file(a, f.dataset.f));
   }
 
+  // Reply tile: select text in the pane (a line starts out selected), Reply quotes it to the agent, Ask aside answers off the record.
+  const rp = $('.rpmock');
+  if (rp) {
+    const pane = $('.pane', rp), log = $('.log', rp), btn = $('.rpbtn', rp), box = $('.rpbox', rp), q = $('input', box), hint = $('.rphint', rp);
+    let quote = $('mark', log).textContent;
+    const place = r => { // the Reply button sits just under the selection, or above it near the pane's bottom
+      const p = pane.getBoundingClientRect(), below = r.bottom - p.top + 6;
+      btn.style.top = (below > p.height - 34 ? r.top - p.top - 32 : below) + 'px';
+      btn.style.left = Math.max(8, Math.min(r.left - p.left, p.width - 70)) + 'px';
+    };
+    const line = (cls, html) => log.append(el('li', cls, html));
+    const esc = t => t.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+    const home = () => { if (!log.classList.contains('own')) place($('mark', log).getBoundingClientRect()); };
+    requestAnimationFrame(home);
+    addEventListener('resize', home);
+    addEventListener('load', home);
+    document.addEventListener('selectionchange', () => {
+      const s = getSelection(), t = s.toString().trim();
+      if (!t || !s.rangeCount || !log.contains(s.anchorNode)) return;
+      log.classList.add('own'); // the visitor's own selection replaces the sample one
+      quote = t.length > 200 ? t.slice(0, 200) + '…' : t;
+      place(s.getRangeAt(0).getBoundingClientRect());
+      btn.hidden = false;
+    });
+    btn.addEventListener('click', () => {
+      $('blockquote', box).textContent = '> ' + quote;
+      btn.hidden = true; box.hidden = false; q.focus();
+      getSelection().removeAllRanges();
+    });
+    const send = aside => {
+      const ask = q.value.trim() || 'What does this mean?';
+      box.hidden = true; q.value = '';
+      const long = /memory|restart/i.test(quote);
+      const a = long ? 'Yes: they live in a Map, so a restart clears them. I can move them to the database next.' : 'That comes from the last change in src/api/wishlist.js. Want me to explain it in more detail?';
+      if (aside) line('aside', `<small>Ask aside · not added to the agent's conversation</small>${esc(a)}`);
+      else { line('q', esc('> ' + quote + '\n' + ask)); setTimeout(() => line('', esc(a)), calm ? 0 : 600); }
+      hint.textContent = (aside ? 'The answer shows in the pane, and the agent never sees the question.' : 'The agent got your quote and question as one message.') + ' Select more text to reply again.';
+      log.classList.add('own'); log.focus(); // the old selection has scrolled away, so its button goes until the next one
+    };
+    box.addEventListener('submit', e => { e.preventDefault(); send(false); });
+    $('[data-aside]', box).addEventListener('click', () => send(true));
+    box.addEventListener('keydown', e => { if (e.key === 'Escape') { box.hidden = true; btn.hidden = false; btn.focus(); } });
+  }
+
   // 2. ⌘K: a command palette like the app's, and the menu on phones.
   const cmdk = $('#cmdk');
   if (cmdk) {
@@ -2167,6 +2279,7 @@ test('two of a product add up', async () =&gt; {
       ...[['Demo', 'demo'], ['Overview', 'overview'], ['Why Relay', 'why'], ['Features', 'features'], ['Review', 'review'], ['Themes', 'themes'], ['Privacy', 'privacy'], ['Roadmap', 'roadmap'], ['FAQ', 'faq']]
         .map(([l, id]) => [`Go to ${l}`, 'Section', go(id)]),
       ['Run the demo', 'Demo', () => { go('demo')(); runDemo(); }],
+      ['Meet the team', 'The built-in specialists', open('team.html')],
       [`Switch to ${isDark() ? 'light' : 'dark'} mode`, 'Appearance', () => btn.click()],
       ...THEMES.map((t, i) => [`Try theme: ${t[0]}`, t[1] ? 'Dark theme' : 'Light theme', () => { go('themes')(); pickTheme(i); }]),
       ['Download for Mac', 'Latest release', () => { location.href = $('[data-download]').href; }],
