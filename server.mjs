@@ -370,7 +370,7 @@ route('POST', '/api/sessions/:id/input', async ({ req, params, body }) => {
   let target = closed ? null : sameProject(req, params.id);
   if (target?.id === from.id) throw fail(400, "An agent can't type into itself");
   const recent = recentMessages(from.project);
-  if (target) S.deliver(target, S.sign(from, text));
+  if (target) await deliverOrFail(target, S.sign(from, text));
   else target = await wake(closed, S.sign(from, text));
   if (from.startedBy?.id === target.id) from.told = true; // it told its starter itself, so its turn's report isn't sent too
   sent.set(from.project, [...recent, Date.now()]);
@@ -423,9 +423,13 @@ function logMessage(project, from, to, via) {
 // A worker Relay closed once its turn was done (S.turnEnded) still answers to its old id and its name: a message
 // opens its chat again, as its first message (or reaches it, if it's open again already).
 const closedWorker = (project, to) => db.chats.find(c => c.autoClosed && c.project === project && (c.autoClosed === to || c.name.toLowerCase() === to.toLowerCase()));
+// A message from an agent, typed and sent; its sender hears when a prompt that appeared meanwhile stopped it.
+async function deliverOrFail(to, text) {
+  if (!(await S.deliver(to, text))) throw fail(409, `A prompt appeared in ${to.name}'s pane, so the message wasn't sent (it may sit typed in their input). Try again once the user has answered it.`);
+}
 async function wake(chat, signed) {
   const live = S.chatSessions(chat.id).find(s => !s.exited);
-  if (live) return (S.deliver(live, signed), live);
+  if (live) return (await deliverOrFail(live, signed), live);
   for (const s of S.chatSessions(chat.id)) S.stop(s); // a finished pane gives way
   return reopen(chat, signed);
 }
@@ -451,7 +455,7 @@ route('POST', '/api/messages', async ({ req, body }) => {
   const bucket = target?.project ?? project;
   const recent = recentMessages(bucket);
   if (target) {
-    S.deliver(target, signed);
+    await deliverOrFail(target, signed);
   } else if (closed) {
     target = await wake(closed, signed);
   } else {
@@ -507,7 +511,7 @@ route('POST', '/api/spaces/ask', async ({ req, body }) => {
   const askId = randomUUID().slice(0, 8);
   const signed = `[Question from ${S.plain(from.name)} in space ${spaceName(from.project)} (ask id ${askId})]\n${S.defuse(question)}\n\n` +
     `(Answer briefly with answer_space and ask id ${askId}. Share only what they need; they can't see your chats or board.)`;
-  if (target) S.deliver(target, signed);
+  if (target) await deliverOrFail(target, signed);
   else {
     mayStartAgents(req);
     target = await S.createSession({ project, prompt: signed, startedBy: starter(req) });
@@ -518,7 +522,7 @@ route('POST', '/api/spaces/ask', async ({ req, body }) => {
   bus.emit('event', { type: 'agent-message', from: `${from.name} (${spaceName(from.project)})`, to: target.name, ...logMessage(project, from, target, 'ask_space') });
   return { askId, deliveredTo: { name: target.name, space: path.basename(project), started: !agents.includes(target) } };
 });
-route('POST', '/api/spaces/answer', ({ req, body }) => {
+route('POST', '/api/spaces/answer', async ({ req, body }) => {
   mayMessage(req);
   const from = mayAskSpaces(req);
   const askId = String(body.askId ?? '');
@@ -535,7 +539,7 @@ route('POST', '/api/spaces/answer', ({ req, body }) => {
   // Spaces share summaries, not transcripts.
   const capped = answer.length > 2000 ? `${answer.slice(0, 2000)}... (cut at 2,000 characters)` : answer;
   const recent = recentMessages(to.project);
-  S.deliver(to, `[Answer from space ${spaceName(from.project)} (ask id ${askId})]\n${S.defuse(capped)}`);
+  await deliverOrFail(to, `[Answer from space ${spaceName(from.project)} (ask id ${askId})]\n${S.defuse(capped)}`);
   asks.delete(askId); // once delivered: an asker busy at a prompt can be answered again later
   sent.set(to.project, [...recent, Date.now()]);
   bus.emit('event', { type: 'agent-message', from: `${from.name} (${spaceName(from.project)})`, to: to.name, ...logMessage(to.project, from, to, 'answer_space') });

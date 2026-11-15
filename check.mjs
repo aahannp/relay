@@ -48,6 +48,27 @@ assert.deepEqual(migrated({ mixFolders: false, openSpaces: [] }, [spA, spB]).ope
 assert.ok(!('mixFolders' in migrated({ mixFolders: true }, [spA])), 'the old switch is gone');
 assert.deepEqual(migrated({ openSpaces: ['/x/a', '/gone', '/x/a', '/x/b'] }, [spA, spB]).openSpaces, ['/x/a', '/x/b'], 'removed folders and repeats drop out');
 assert.ok(desk.token.length >= 32, 'an empty token file is replaced with a real secret');
+// desk.json that can't be read: Relay falls back to desk.json.bak, else starts empty, and keeps the bad file aside.
+// In a child process, so the running server's store (and its file) stay untouched.
+{
+  const storeDir = path.join(tmp, 'store');
+  fs.mkdirSync(storeDir);
+  const deskFile = path.join(storeDir, 'desk.json');
+  const run = code => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
+    `import * as S from ${JSON.stringify(new URL('./lib/store.mjs', import.meta.url).href)}; S.load(${JSON.stringify(storeDir)}); ${code}`], { stdio: ['ignore', 'pipe', 'pipe'] }).toString());
+  const saved = { settings: { theme: 'saved' }, tasks: [{ id: 't1' }] };
+  fs.writeFileSync(deskFile, JSON.stringify(saved));
+  run(`S.db.settings.theme = 'changed'; S.changed('settings'); console.log('{}')`);
+  assert.deepEqual([JSON.parse(fs.readFileSync(`${deskFile}.bak`, 'utf8')).settings.theme, JSON.parse(fs.readFileSync(deskFile, 'utf8')).settings.theme], ['saved', 'changed'], 'a save keeps the previous version as desk.json.bak');
+  fs.writeFileSync(deskFile, '{"settings": {"theme": "cha'); // cut short
+  assert.deepEqual(run(`console.log(JSON.stringify([S.db.settings.theme, S.db.tasks]))`), ['saved', saved.tasks], 'a corrupt desk.json loads desk.json.bak');
+  const asideFiles = () => fs.readdirSync(storeDir).filter(f => f.startsWith('desk.json.corrupt-'));
+  assert.equal(asideFiles().length, 1, 'and keeps the corrupt file aside');
+  fs.writeFileSync(deskFile, 'nope');
+  fs.writeFileSync(`${deskFile}.bak`, '{,');
+  assert.deepEqual(run(`console.log(JSON.stringify([S.db.settings.theme, S.db.tasks]))`), [STORE_DEFAULTS.settings.theme, []], 'both corrupt: Relay starts empty instead of failing to start');
+  assert.deepEqual([asideFiles().length, fs.existsSync(deskFile)], [2, false], 'and keeps the corrupt copy, out of the way of the next save');
+}
 assert.ok(!fs.existsSync(path.join(tmp, 'data', 'mcp', 'gone1234.json')), "a session's MCP file never outlives a restart");
 let SELF = `http://127.0.0.1:${desk.port}`;
 const EVIL = 'https://evil.example';
@@ -1813,6 +1834,16 @@ esac
     assert.deepEqual(typed.map(t => t.replace('\x1b[200~', '').slice(0, 14)), ['[Message from ', '\r', '[Message from ', '\r'],
       "an agent's /btw is signed first, so it's no command, and its aside flag is ignored");
     typed.length = 0;
+    // A prompt drawn between the paste and its Enter: no Enter (it would answer the prompt), and the sender hears so
+    s.pty.write = d => { typed.push(d); write(d); if (d.includes('late prompt')) showPrompt(); };
+    const late = await paste('late prompt');
+    assert.deepEqual([late.status, typed.splice(0)], [409, ['\x1b[200~late prompt\x1b[201~']], 'a reply: pasted, then no Enter once a prompt appears');
+    await hidePrompt();
+    const lateMsg = await fromPeer({ text: 'late prompt' });
+    assert.equal(typed.splice(0).length, 1, "an agent's message: pasted, then no Enter");
+    assert.deepEqual([lateMsg.status, lateMsg.body.error], [409, "A prompt appeared in Replier's pane, so the message wasn't sent (it may sit typed in their input). Try again once the user has answered it."], 'and its sender is told it was typed but not sent');
+    await hidePrompt();
+    s.pty.write = d => { typed.push(d); write(d); };
     await ok('DELETE', `/api/sessions/${peer.id}`);
     s.agent = 'codex';
     assert.equal((await request('POST', `/api/sessions/${r.id}/input`, { body: { text: 'why?', paste: true, aside: true } })).status, 400, 'ask aside is for Claude Code only');
