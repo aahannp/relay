@@ -213,6 +213,11 @@ route('POST', '/api/sessions', async ({ req, body }) => {
   return S.info(kind === 'agent' && fromAgent(req) ? await S.launched(s) : s); // you see a pane that dies; an agent is told
 });
 route('DELETE', '/api/sessions/:id', ({ req, params }) => (S.stop(noShell(req, sameProject(req, params.id), 'stop')), {}));
+// You hand a Claude lead off to a fresh one (the pane's "Hand off"): answered once the request is typed, the rest comes as 'handoff' events.
+route('POST', '/api/sessions/:id/handoff', async ({ req, params }) => {
+  if (fromAgent(req)) throw fail(403, 'Only you can hand a lead off');
+  return { file: await S.handoff(findSession(params.id)) };
+});
 
 // Claude's SessionStart hook reports the conversation id a pane is on (it changes on /clear). After a compaction
 // its answer, printed by the hook, tells the agent again who it is and what is around it.
