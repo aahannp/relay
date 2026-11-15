@@ -151,6 +151,23 @@ actions.startSpecialist = startSpecialist;
 // One agent messaged another: say so, and offer to jump to the pane where it arrived.
 on('agent-message', e => toast(e.started ? `${e.from} started ${e.to} with a message` : `${e.from} → ${e.to}`, 'info',
   { label: 'Show', onClick: () => focusSession(e.toId) }));
+// Hand off: a Claude lead writes a handoff doc and a fresh lead takes over from it (see handoff in lib/sessions.mjs).
+const canHandOff = s => s.kind === 'agent' && s.role === 'lead' && s.agent === 'claude';
+const HANDOFF_STEP = { writing: 'Writing handoff…', starting: 'Starting new lead…' };
+const handoffButton = (id, step) => {
+  const b = document.querySelector(`.pane[data-id="${id}"] .handoff-btn`);
+  if (b) Object.assign(b, { disabled: Boolean(HANDOFF_STEP[step]), textContent: HANDOFF_STEP[step] ?? 'Hand off' });
+};
+async function handOff(s) {
+  if (!(await confirmDialog('Hand off', `Hand off ${s.name} to a fresh lead? It writes a handoff, starts a new lead from it, and closes this one.`, { label: 'Hand off' }))) return;
+  handoffButton(s.id, 'writing');
+  try { await api('POST', `/api/sessions/${s.id}/handoff`); } catch (e) { handoffButton(s.id, null); toast(e.message, 'error'); }
+}
+on('handoff', e => {
+  handoffButton(e.id, e.step);
+  if (e.step === 'done') toast(`Handed off to ${e.freshName}`, 'ok', { label: 'Open handoff', onClick: () => actions.openFile(e.file) });
+  if (e.step === 'failed') toast(`Hand off failed: ${e.error}`, 'error');
+});
 on('lead-upkeep', e => toast(e.text, 'info', { label: 'Show', onClick: () => focusSession(e.toId) }));
 on('specialist-changed', e => toast(`${e.name}'s profile was changed by ${e.by}`, 'info', { label: 'Show', onClick: () => actions.showView('settings') }));
 on('specialists', () => {
@@ -183,6 +200,10 @@ command('Start a lead agent', () => actions.startLead(), { icon: 'star' });
 command('New shell', () => newSession({ kind: 'shell' }), { icon: 'terminal' });
 command('New browser pane', () => newBrowser(), { icon: 'globe' });
 command('Hide this pane', () => (focusedId ? hidePane(focusedId) : toast('Click into a pane first', 'error')), { icon: 'eyeOff' });
+command('Hand off to a new lead', () => {
+  const s = state.sessions.find(x => x.id === focusedId);
+  return s && canHandOff(s) ? handOff(s) : toast('Click into a lead agent pane first', 'error');
+}, { icon: 'send' });
 command('Show hidden panes', () => showHidden(), { icon: 'eye' });
 
 // ---------- Keeping panes in step with the server ----------
@@ -505,6 +526,7 @@ function terminalPane(s, parent) {
     face, h('div', { class: 'pane-titles' }, title, sub), meter, limitsEl, state_,
     h('div', { class: 'pane-tools' },
       blocksBtn,
+      canHandOff(s) && h('button', { class: 'btn xs handoff-btn', title: 'Write a handoff, start a fresh lead from it and close this one', onClick: () => handOff(s) }, 'Hand off'),
       s.chatId && h('button', { class: 'icon-btn', title: 'Name this agent', onClick: () => renameAgent(s) }, icon('pen', 13)),
       h('button', { class: 'icon-btn', title: 'Hide from the grid (it keeps running)', onClick: () => hidePane(id) }, icon('eyeOff', 14)),
       h('button', { class: 'icon-btn', title: 'Maximise (double-click the header)', onClick: () => toggleMaximise(id) }, icon('maximize', 14)),

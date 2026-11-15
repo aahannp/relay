@@ -11,7 +11,7 @@ import { start, processTree } from './server.mjs';
 import { createWorktree } from './lib/git.mjs';
 import { db, bus, migrate, DEFAULTS as STORE_DEFAULTS } from './lib/store.mjs';
 import * as T from './lib/team.mjs';
-import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose, deliver, noteLimits, usageLimits } from './lib/sessions.mjs';
+import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose, deliver, noteLimits, usageLimits, HANDOFF } from './lib/sessions.mjs';
 import { THEMES } from './public/js/themes.js';
 import { transcriptContext } from './lib/transcripts.mjs';
 import { priceReply } from './lib/usage.mjs';
@@ -1088,6 +1088,55 @@ esac
     await ok('PATCH', '/api/settings', { leadUpkeep: { ...UP, on: false } });
     for (const id of [fresh.id, other.id, worker.id]) await ok('DELETE', `/api/sessions/${id}`);
     db.tasks.splice(db.tasks.indexOf(db.tasks.find(t => t.id === task.id)), 1);
+  }
+
+  // Hand off: you ask a Claude lead for a handoff doc (your /handoff skill, else a built-in prompt); once it's written
+  // and the turn is over, a fresh lead takes over from it the way lead upkeep's does. A timeout changes nothing.
+  {
+    const lead = await ok('POST', '/api/sessions', { kind: 'agent', agent: 'claude', project: repo, role: 'lead', name: 'Hand Lead', prompt: 'Build it' });
+    const peer = await ok('POST', '/api/sessions', { kind: 'agent', agent: 'claude', project: repo, role: 'lead', name: 'hand peer' });
+    const plainAgent = await ok('POST', '/api/sessions', { kind: 'agent', agent: 'claude', project: repo, name: 'hand plain' });
+    const shell = await ok('POST', '/api/sessions', { kind: 'shell', project: repo });
+    const worker = (await request('POST', '/api/sessions', { headers: { 'x-desk-session': lead.id }, body: { kind: 'agent', agent: 'claude', project: repo, name: 'Hand worker' } })).body;
+    for (const id of [lead.id, peer.id, plainAgent.id, worker.id]) await screenOf(id, /FAKE-CLAUDE/, 'started');
+    const handoff = id => request('POST', `/api/sessions/${id}/handoff`);
+    for (const x of [plainAgent, shell]) assert.equal((await handoff(x.id)).status, 400, 'only a Claude lead hands off');
+    assert.equal((await request('POST', `/api/sessions/${lead.id}/handoff`, { headers: { 'x-desk-via': 'mcp' } })).status, 403, 'an agent cannot');
+    const steps = [];
+    const onStep = e => e.type === 'handoff' && e.id === lead.id && steps.push(e);
+    bus.on('event', onStep);
+    const stepped = async step => { for (let i = 0; i < 100 && !steps.some(e => e.step === step); i++) await new Promise(r => setTimeout(r, 50)); return steps.find(e => e.step === step); };
+    const skill = path.join(claudeHome, 'skills', 'handoff');
+    fs.rmSync(skill, { recursive: true, force: true });
+    Object.assign(HANDOFF, { wait: 1000, poll: 50 });
+    const { file } = (await handoff(lead.id)).body;
+    assert.match(file, new RegExp(`^${repo}/\\.agent-desk/handoffs/\\d{4}-\\d\\d-\\d\\d-\\d{4}-hand-lead\\.md$`), 'its doc goes in the project, stamped and named');
+    await screenOf(lead.id, /Write a handoff doc so a fresh lead.*## Next steps/, 'no skill: the built-in prompt is typed');
+    assert.equal((await stepped('failed'))?.error, 'No handoff from Hand Lead after 10 minutes; it keeps running', 'nothing written: it times out');
+    assert.ok(sessions.has(lead.id) && !sessions.get(lead.id).exited && sessions.get(worker.id).startedBy.id === lead.id, 'and nothing changed');
+    steps.length = 0;
+    fs.mkdirSync(skill, { recursive: true });
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: handoff\n---\n');
+    HANDOFF.wait = 30_000;
+    assert.equal((await handoff(lead.id)).status, 200);
+    assert.equal((await handoff(lead.id)).status, 409, 'one at a time');
+    await screenOf(lead.id, new RegExp(`/handoff write it to ${file.replace(/[.]/g, '\\.')}`), 'with your skill: /handoff and the path');
+    fs.writeFileSync(file, '# Handoff: build it\n## Next steps\n1. Ship\n');
+    await new Promise(r => setTimeout(r, 300));
+    assert.equal(steps.at(-1).step, 'writing', "written, but the turn isn't over: it waits");
+    await request('POST', '/api/turn-ended', { token: sessions.get(lead.id).agentToken, body: {} });
+    const done = await stepped('done');
+    assert.ok(done && steps.some(e => e.step === 'starting'), 'the turn ends: a new lead starts');
+    assert.ok(!sessions.has(lead.id), 'the old lead is stopped');
+    const fresh = sessions.get(done.freshId);
+    assert.deepEqual([fresh.name, fresh.role, fresh.model, fresh.effort], ['Hand Lead', 'lead', lead.model, lead.effort], 'same name, model and effort');
+    await screenOf(fresh.id, new RegExp(`taking over as lead from Hand Lead.*Read the handoff first: ${file.replace(/[.]/g, '\\.')}`), 'its prompt points at the doc');
+    assert.equal(sessions.get(worker.id).startedBy.id, fresh.id, 'its workers now report to the new lead');
+    await screenOf(peer.id, new RegExp(`Hand Lead handed off: a fresh Hand Lead \\(agent ${fresh.id}\\)`), 'the other lead is told');
+    assert.equal(db.chats.find(c => c.id === lead.chatId)?.replacedBy, fresh.chatId, "the old chat stays, marked replaced");
+    bus.off('event', onStep);
+    fs.rmSync(skill, { recursive: true, force: true });
+    for (const id of [fresh.id, peer.id, plainAgent.id, shell.id, worker.id]) await ok('DELETE', `/api/sessions/${id}`);
   }
 
   // ---- context: T1 — a compaction window per kind of agent, and who it is again after a compaction
