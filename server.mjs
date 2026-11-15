@@ -357,7 +357,11 @@ route('GET', '/api/sessions/:id/output', ({ req, params, query }) =>
 route('POST', '/api/sessions/:id/input', async ({ req, params, body }) => {
   const text = String(body.text ?? '');
   // Only you can Ask aside (/btw): from an agent, the flag is ignored and deliver refuses a leading /.
-  if (!fromAgent(req)) return (body.paste ? S.paste(findSession(params.id), text, { aside: body.aside === true }) : S.send(findSession(params.id), text, body.submit !== false), {});
+  if (!fromAgent(req) && body.paste) {
+    if (!(await S.paste(findSession(params.id), text, { aside: body.aside === true }))) throw fail(409, 'A prompt appeared in the pane; answer it first');
+    return {};
+  }
+  if (!fromAgent(req)) return (S.send(findSession(params.id), text, body.submit !== false), {});
   mayMessage(req);
   const from = caller(req);
   const closed = from && !S.sessions.has(params.id) && closedWorker(from.project, params.id);

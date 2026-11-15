@@ -1740,15 +1740,28 @@ esac
     await new Promise(res => setTimeout(res, 300));
     assert.deepEqual(typed.splice(0), ['as\x01typed\n', '\r'], 'without the flag, what you type goes as it is');
     // A prompt that shows up while a message waits its turn: the waiting one is dropped, not typed (its Enter would answer it)
+    const showPrompt = () => new Promise(res => s.term.write('\r\n 1. Yes\r\n 2. No\r\n', res));
+    const hidePrompt = () => new Promise(res => s.term.write('moved on\r\n'.repeat(30), res)); // it scrolls away
     for (const [how, send] of [['a reply', text => paste(text)], ['a message from an agent', async text => deliver(s, text)]]) {
-      await send('first');
-      await send('second');
-      await new Promise(res => s.term.write('\r\n 1. Yes\r\n 2. No\r\n', res));
+      let release;
+      s.inbox = new Promise(res => (release = res)); // something else is being typed
+      const waiting = send('second');
+      await new Promise(res => setTimeout(res, 150)); // it's in, and waits its turn
+      await showPrompt();
+      release();
+      const answer = await waiting;
       await s.inbox;
-      assert.ok(!typed.some(t => t.includes('second')), `${how} queued before a prompt appeared isn't typed into it: ${JSON.stringify(typed)}`);
-      typed.length = 0;
-      await new Promise(res => s.term.write('moved on\r\n'.repeat(30), res)); // the prompt scrolls away
+      assert.deepEqual(typed, [], `${how} queued before a prompt appeared isn't typed into it`);
+      if (answer) assert.deepEqual([answer.status, answer.body.error], [409, 'A prompt appeared in the pane; answer it first'], 'and you hear so, so the reply box keeps your text');
+      await hidePrompt();
     }
+    // Ask aside: a prompt that shows up after "/btw " is typed stops the rest
+    s.pty.write = d => { typed.push(d); write(d); if (d === '/btw ') showPrompt(); };
+    const stopped = await request('POST', `/api/sessions/${r.id}/input`, { body: { text: 'why?', paste: true, aside: true } });
+    assert.deepEqual([stopped.status, typed], [409, ['/btw ']], 'ask aside stops before the question and Enter when a prompt shows up after "/btw "');
+    typed.length = 0;
+    s.pty.write = d => { typed.push(d); write(d); };
+    await hidePrompt();
     s.exited = true;
     const finished = await paste('hi');
     assert.deepEqual([finished.status, finished.body.error], [409, 'Replier has finished'], 'a pane that has exited says so, so the box keeps what you typed');
