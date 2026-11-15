@@ -1,7 +1,7 @@
 ---
 name: nova
 description: "Strategist: researches how a product could be better, reviews progress so far, and ranks what to build next"
-model: fable
+model: claude-fable-5-2
 disallowedTools: Edit, Write, NotebookEdit
 ---
 

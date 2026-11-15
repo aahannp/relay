@@ -43,7 +43,7 @@ const agentFile = s => [
   '---',
   `name: ${s.id}`,
   `description: ${JSON.stringify(s.role)}`,
-  `model: ${s.model}`,
+  `model: ${s.model === 'fable' ? 'claude-fable-5-2' : s.model}`, // subagent files take the sonnet/opus/haiku aliases; Fable by its full id
   ...(s.readOnly ? ['disallowedTools: Edit, Write, NotebookEdit'] : []),
   '---',
   '',

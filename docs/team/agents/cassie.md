@@ -1,7 +1,7 @@
 ---
 name: cassie
 description: "Critic: tears into a product, what it is made of and where its architecture is weak, with research you learn from"
-model: fable
+model: claude-fable-5-2
 disallowedTools: Edit, Write, NotebookEdit
 ---
 
