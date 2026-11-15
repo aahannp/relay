@@ -659,8 +659,8 @@ function replyToSelection(p, host) {
       err.textContent = '';
       try {
         await api('POST', `/api/sessions/${p.id}/input`, { text: quoteReply(sel, input.value), paste: true, aside });
+        picked = ''; // first: clearing the selection redraws the button from what's still picked
         term.clearSelection();
-        picked = '';
         close();
       } catch (e) {
         err.textContent = e.message; // what you typed stays, to send once you've answered the prompt

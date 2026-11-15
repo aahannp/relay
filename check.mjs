@@ -1962,6 +1962,11 @@ app.whenReady().then(async () => {
       send({ type: 'mouseDown', x: Math.round(item.x), y: Math.round(item.y), button: 'left', clickCount: 1 });
       send({ type: 'mouseUp', x: Math.round(item.x), y: Math.round(item.y), button: 'left', clickCount: 1 });
       out.quote = await until('document.querySelector(".reply-pop .reply-quote")?.textContent').catch(() => null);
+      // Sent: the box closes and the Reply button stays hidden (clearing the selection used to redraw it).
+      await js('document.querySelector(".reply-pop textarea").value = "why?"; [...document.querySelectorAll(".reply-pop button")].find(b => b.textContent.includes("Send")).click()');
+      await until('!document.querySelector(".reply-pop")').catch(() => null);
+      await wait(300);
+      out.after = await js('[...document.querySelectorAll(".reply-btn")].some(b => !b.hidden) ? "button shown" : "hidden"');
     }
     out.menu = Boolean(item);
     srv.close?.();
@@ -1979,7 +1984,7 @@ app.whenReady().then(async () => {
         const timer = setTimeout(() => child.kill(), 60_000);
         child.on('exit', () => { clearTimeout(timer); const line = text.split('\n').find(l => l.startsWith('UI-RESULT ')); line ? resolve(JSON.parse(line.slice(10))) : reject(new Error(`no result from the window: ${text}`)); });
       });
-      assert.deepEqual(result, { button: true, menu: true, quote: 'pick me' }, "a full-screen agent's own selection: the Reply button shows, and right-click → Reply to selection opens the box quoting it");
+      assert.deepEqual(result, { button: true, menu: true, quote: 'pick me', after: 'hidden' }, "a full-screen agent's own selection: the Reply button shows, right-click → Reply to selection opens the box quoting it, and once sent the button is gone");
     }
     // Ask aside: Claude Code's /btw typed as keys, then the quote and question as one paste, then Enter. Only you, only Claude.
     assert.equal((await request('POST', `/api/sessions/${r.id}/input`, { body: { text: '> a\n> b\n\nwhy?', paste: true, aside: true } })).status, 200);
