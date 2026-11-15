@@ -368,7 +368,9 @@ route('POST', '/api/sessions/:id/input', async ({ req, params, body }) => {
   const text = String(body.text ?? '');
   // Only you can Ask aside (/btw): from an agent, the flag is ignored and deliver refuses a leading /.
   if (!fromAgent(req) && body.paste) {
-    if (!(await S.paste(findSession(params.id), text, { aside: body.aside === true }))) throw fail(409, 'A prompt appeared in the pane; answer it first');
+    const done = await S.paste(findSession(params.id), text, { aside: body.aside === true });
+    if (done === 'typed') throw fail(409, "A prompt appeared in the pane before the Enter: your text is in its input box and goes out with the next Enter. Don't send it again.");
+    if (!done) throw fail(409, 'A prompt appeared in the pane; answer it first');
     return {};
   }
   if (!fromAgent(req)) return (S.send(findSession(params.id), text, body.submit !== false), {});
@@ -433,7 +435,9 @@ function logMessage(project, from, to, via) {
 const closedWorker = (project, to) => db.chats.find(c => c.autoClosed && c.project === project && (c.autoClosed === to || c.name.toLowerCase() === to.toLowerCase()));
 // A message from an agent, typed and sent; its sender hears when a prompt that appeared meanwhile stopped it.
 async function deliverOrFail(to, text) {
-  if (!(await S.deliver(to, text))) throw fail(409, `A prompt appeared in ${to.name}'s pane, so the message wasn't sent (it may sit typed in their input). Try again once the user has answered it.`);
+  const done = await S.deliver(to, text);
+  if (done === 'typed') throw fail(409, `A prompt appeared in ${to.name}'s pane before the Enter, so the message wasn't sent. It's in their input box and goes out with the next Enter: don't send it again.`);
+  if (!done) throw fail(409, `A prompt appeared in ${to.name}'s pane, so the message wasn't typed. Try again once the user has answered it.`);
 }
 async function wake(chat, signed) {
   const live = S.chatSessions(chat.id).find(s => !s.exited);

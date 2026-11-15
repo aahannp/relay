@@ -35,7 +35,7 @@ process.env.CLAUDE_CONFIG_DIR = path.join(tmp, 'claude-home'); // and never your
 fs.writeFileSync(path.join(tmp, 'data', 'token'), ''); // an empty secret file must never mean "no secret"
 fs.mkdirSync(path.join(tmp, 'data', 'mcp'));
 fs.writeFileSync(path.join(tmp, 'data', 'mcp', 'gone1234.json'), 'left by a crash');
-fs.writeFileSync(path.join(tmp, 'data', 'desk.json'), JSON.stringify({ settings: { agentDefaults: { claude: { model: '', effort: '' }, lead: { model: 'opus', effort: 'high' } } } }));
+fs.writeFileSync(path.join(tmp, 'data', 'desk.json'), JSON.stringify({ projects: [], tasks: [], settings: { agentDefaults: { claude: { model: '', effort: '' }, lead: { model: 'opus', effort: 'high' } } } }));
 let desk = await start({ port: 0, dataDir: path.join(tmp, 'data') });
 assert.deepEqual(db.settings.agentDefaults, { claude: { model: 'sonnet', effort: '', compactWindow: 300_000 }, lead: { model: 'opus', effort: 'high', compactWindow: 400_000 } }, "an old install's workers move to Sonnet; leads stay on Opus");
 // Old settings: asking between folders turned off stays off under its new name
@@ -56,7 +56,7 @@ assert.ok(desk.token.length >= 32, 'an empty token file is replaced with a real 
   const deskFile = path.join(storeDir, 'desk.json');
   const run = code => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
     `import * as S from ${JSON.stringify(new URL('./lib/store.mjs', import.meta.url).href)}; S.load(${JSON.stringify(storeDir)}); ${code}`], { stdio: ['ignore', 'pipe', 'pipe'] }).toString());
-  const saved = { settings: { theme: 'saved' }, tasks: [{ id: 't1' }] };
+  const saved = { settings: { theme: 'saved' }, projects: [], tasks: [{ id: 't1' }] };
   fs.writeFileSync(deskFile, JSON.stringify(saved));
   run(`S.db.settings.theme = 'changed'; S.changed('settings'); console.log('{}')`);
   assert.deepEqual([JSON.parse(fs.readFileSync(`${deskFile}.bak`, 'utf8')).settings.theme, JSON.parse(fs.readFileSync(deskFile, 'utf8')).settings.theme], ['saved', 'changed'], 'a save keeps the previous version as desk.json.bak');
@@ -68,6 +68,24 @@ assert.ok(desk.token.length >= 32, 'an empty token file is replaced with a real 
   fs.writeFileSync(`${deskFile}.bak`, '{,');
   assert.deepEqual(run(`console.log(JSON.stringify([S.db.settings.theme, S.db.tasks]))`), [STORE_DEFAULTS.settings.theme, []], 'both corrupt: Relay starts empty instead of failing to start');
   assert.deepEqual([asideFiles().length, fs.existsSync(deskFile)], [2, false], 'and keeps the corrupt copy, out of the way of the next save');
+  // JSON of the wrong shape is corrupt too: it would load as an empty Relay, and the next save would make it the .bak
+  fs.writeFileSync(`${deskFile}.bak`, JSON.stringify(saved));
+  for (const bad of ['[]', '{}', '{"settings": {}}', '{"projects": [], "tasks": {}}']) {
+    fs.writeFileSync(deskFile, bad);
+    assert.deepEqual(run(`console.log(JSON.stringify(S.db.tasks))`), saved.tasks, `${bad} is corrupt: desk.json.bak loads`);
+  }
+  // A file Relay may not read isn't corrupt: it stays where it is, and Relay stops as before
+  const fails = () => assert.throws(() => run('console.log(1)'), /EACCES|EISDIR/);
+  fs.writeFileSync(deskFile, JSON.stringify(saved));
+  fs.chmodSync(deskFile, 0);
+  const before = asideFiles().length;
+  fails();
+  fs.chmodSync(deskFile, 0o600);
+  assert.deepEqual([asideFiles().length, JSON.parse(fs.readFileSync(deskFile, 'utf8')).tasks], [before, saved.tasks], 'an unreadable desk.json is left alone');
+  fs.rmSync(deskFile);
+  fs.mkdirSync(deskFile);
+  fails();
+  assert.deepEqual([asideFiles().length, fs.statSync(deskFile).isDirectory()], [before, true], 'so is a folder in its place');
 }
 assert.ok(!fs.existsSync(path.join(tmp, 'data', 'mcp', 'gone1234.json')), "a session's MCP file never outlives a restart");
 let SELF = `http://127.0.0.1:${desk.port}`;
@@ -1408,6 +1426,14 @@ esac
     assert.match(await outputOf(boss.id), /\[Report from Once only [^\]]*\] Once only is done/, 'a turn that moved its task to review still sends its report: the move only announced it');
     assert.ok(!sessions.has(scouty.id) && !sessions.has(tasked.id), 'then the worker closes, freeing its slot');
     assert.ok(sessions.has(kept.id), 'but not one you typed in');
+    const held = await worker('Held');
+    await screenOf(held.id, /FAKE-CLAUDE/, 'started');
+    sessions.get(boss.id).attention = true; // its starter waits at a prompt, so the report can't go in
+    assert.equal((await ended(held, 'Held is done')).status, 200);
+    await new Promise(r => setTimeout(r, 1500));
+    assert.ok(sessions.has(held.id), 'a worker whose report a prompt held up stays open');
+    const bossNews = (await request('POST', '/api/news', { token: sessions.get(boss.id).agentToken })).body?.hookSpecificOutput?.additionalContext ?? '';
+    assert.match(bossNews, new RegExp(`Held's report didn't reach Boss three: a prompt was up\\. Held stays open; read_agent_chat ${held.id}`), 'and its starter hears so');
     const chat = (await ok('GET', '/api/chats')).find(c => c.id === scouty.chatId);
     assert.deepEqual([chat.running, chat.autoClosed], [false, scouty.id], 'its chat stays');
     assert.doesNotMatch((await rpc('tools/call', { name: 'get_agent_diff', arguments: { id: scouty.id } }, asBoss)).result.content[0].text, /No such session/, 'get_agent_diff still finds it by its old id');
@@ -1418,7 +1444,7 @@ esac
     const again = [...sessions.values()].find(s => s.chatId === tasked.chatId);
     await screenOf(again.id, /One more thing/, 'and gets the message');
     assert.equal(db.tasks.find(t => t.id === job.id).sessionId, again.id, 'its task follows it');
-    for (const id of [boss.id, kept.id, woke.to.id, again.id]) await ok('DELETE', `/api/sessions/${id}`);
+    for (const id of [boss.id, kept.id, held.id, woke.to.id, again.id]) await ok('DELETE', `/api/sessions/${id}`);
     db.tasks.splice(db.tasks.indexOf(db.tasks.find(t => t.id === job.id)), 1);
   }
 
@@ -1445,7 +1471,8 @@ esac
     fs.writeFileSync(transcript, [line({ type: 'user', message: { content: 'Go' } }), line({ type: 'assistant', message: { content: [{ type: 'text', text: older }] } }),
       line({ type: 'user', message: { content: 'And?' } }), line({ type: 'assistant', message: { content: [{ type: 'text', text: final }] } })].join('\n'));
     const closes = async id => {
-      sessions.get(boss.id).attention = false; // the fake boss goes quiet and looks like it waits for the user, which holds reports
+      // The fake boss's tty rings its bell when a long report overflows its input line, which looks like a prompt and holds reports
+      Object.defineProperty(sessions.get(boss.id), 'attention', { get: () => false, set() {}, configurable: true });
       assert.equal((await request('POST', '/api/turn-ended', { token: sessions.get(id).agentToken, body: { hook_event_name: 'Stop', last_assistant_message: final } })).status, 200);
       for (let i = 0; i < 60 && sessions.has(id); i++) await new Promise(r => setTimeout(r, 50));
       assert.ok(!sessions.has(id), 'the worker closes after its turn');
@@ -1842,10 +1869,11 @@ esac
     s.pty.write = d => { typed.push(d); write(d); if (d.includes('late prompt')) showPrompt(); };
     const late = await paste('late prompt');
     assert.deepEqual([late.status, typed.splice(0)], [409, ['\x1b[200~late prompt\x1b[201~']], 'a reply: pasted, then no Enter once a prompt appears');
+    assert.match(late.body.error, /in its input box and goes out with the next Enter\. Don't send it again/, 'and you hear it is in the input box');
     await hidePrompt();
     const lateMsg = await fromPeer({ text: 'late prompt' });
     assert.equal(typed.splice(0).length, 1, "an agent's message: pasted, then no Enter");
-    assert.deepEqual([lateMsg.status, lateMsg.body.error], [409, "A prompt appeared in Replier's pane, so the message wasn't sent (it may sit typed in their input). Try again once the user has answered it."], 'and its sender is told it was typed but not sent');
+    assert.deepEqual([lateMsg.status, lateMsg.body.error], [409, "A prompt appeared in Replier's pane before the Enter, so the message wasn't sent. It's in their input box and goes out with the next Enter: don't send it again."], 'and its sender is told it is in the input box, not to send it again (a retry would send it twice)');
     await hidePrompt();
     // Claude Code's screen: messages, then the input box, where what you paste goes. Its permission menu takes the box's place.
     const box = text => `${'─'.repeat(60)}\r\n❯ ${text.replace(/\n/g, '\r\n  ')}\r\n${'─'.repeat(60)}\r\n  ⏵⏵ auto mode on\r\n`;
@@ -1870,7 +1898,12 @@ esac
     assert.equal((await request('POST', '/api/needs-you', { token: s.agentToken })).status, 200);
     assert.equal((await fromPeer({ text: 'hi' })).status, 409, "Claude Code's permission notification (its hook) holds messages too, whatever the screen shows");
     assert.deepEqual(typed, []);
-    s.attention = false;
+    // A notification that lands after the prompt was answered doesn't hold the pane for good: its next turn activity clears it
+    for (const hook of ['/api/turn-ended', '/api/news']) {
+      s.attention = true;
+      assert.equal((await request('POST', hook, { token: s.agentToken, body: {} })).status, 200);
+      assert.equal(s.attention, false, `${hook} (no prompt can be up then) clears "needs you"`);
+    }
     assert.equal((await fromPeer({ text: 'hi' })).status, 200, 'and once answered, messages get through');
     s.pty.write = d => { typed.push(d); write(d); };
     await ok('DELETE', `/api/sessions/${peer.id}`);
