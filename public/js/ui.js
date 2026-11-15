@@ -21,6 +21,7 @@ export async function api(method, url, body) {
   });
   if (res.status === 401) location.reload(); // the secret changed; the page shows how to get back in
   const data = await res.json().catch(() => ({}));
+  if (data.blocked) macBlocked(data.blocked, data.error);
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
 }
@@ -110,8 +111,20 @@ export function icon(name, size = 16) {
   return span;
 }
 
+// macOS blocking a folder shows one toast per folder with the way to fix it; the same error from later reads stays quiet.
+const blockedShown = new Set();
+const quiet = new Set();
+export function macBlocked(folder, text) {
+  if (blockedShown.has(folder)) return;
+  blockedShown.add(folder);
+  toast(text, 'error', { label: 'Open Settings', onClick: () => api('POST', '/api/privacy-settings'), ms: 20000 });
+  quiet.add(text);
+}
+on('mac-blocked', e => macBlocked(e.folder, e.text));
+
 export function toast(message, kind = 'info', action) {
-  const ms = kind === 'error' ? 7000 : 4000;
+  if (quiet.has(message)) return;
+  const ms = action?.ms ?? (kind === 'error' ? 7000 : 4000);
   const box = document.getElementById('toasts');
   const t = h('div', { class: `toast ${kind}` },
     icon(kind === 'error' ? 'alert' : kind === 'ok' ? 'check' : 'info'), h('span', {}, message),

@@ -47,11 +47,50 @@ jobs:
       # It fills the shared Electron cache, so build:art and electron-builder reuse it.
       - name: Download Electron
         run: for i in 1 2 3 4 5 6 7 8; do node node_modules/electron/install.js && exit 0; sleep 60; done; exit 1
+      # A self-signed certificate keeps Relay's designated requirement the same in every release, so macOS keeps the
+      # Files and Folders permission people gave it across updates (build/sign.mjs). Without the secrets (forks), the
+      # build is signed ad-hoc as before. The runner is thrown away after the job, keychain included.
+      - name: Import the signing certificate
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MAC_CERT_P12" ]; then
+            echo "::warning::No MAC_CERT_P12 secret: signing ad-hoc, so macOS forgets folder permissions on every update"
+            exit 0
+          fi
+          kc="$RUNNER_TEMP/relay-sign.keychain-db"
+          kcpass=$(openssl rand -base64 24)
+          printf '%s' "$MAC_CERT_P12" | base64 --decode > "$RUNNER_TEMP/relay.p12"
+          security create-keychain -p "$kcpass" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kcpass" "$kc"
+          security import "$RUNNER_TEMP/relay.p12" -k "$kc" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/relay.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kcpass" "$kc" >/dev/null
+          # not "valid" to macOS (self-signed), so no -v
+          hash=$(security find-identity -p codesigning "$kc" | awk '/"Relay Self-Signed"/ { print $2; exit }')
+          if [ -z "$hash" ]; then echo "::error::MAC_CERT_P12 has no \"Relay Self-Signed\" code-signing identity"; exit 1; fi
+          echo "RELAY_SIGN_IDENTITY=$hash" >> "$GITHUB_ENV"
+          echo "RELAY_SIGN_KEYCHAIN=$kc" >> "$GITHUB_ENV"
       # --publish never: electron-builder would otherwise publish by itself on a tag build in CI
       # The early-access repo builds "Relay Debug" from the same commits; every other repo builds Relay.
       - name: Build
         run: |
           if [ "$GITHUB_REPOSITORY" = "aahannp/relay-debug" ]; then npm run dist:debug -- --publish never; else npm run dist -- --publish never; fi
+
+      - name: Check the signature
+        run: |
+          set -euo pipefail
+          app=$(ls -d dist/mac*/*.app | head -1)
+          codesign --verify --deep --strict "$app"
+          req=$(codesign -d -r- "$app" 2>&1 | grep designated)
+          echo "$req"
+          if [ -n "${RELAY_SIGN_IDENTITY:-}" ] && ! grep -q 'certificate leaf' <<<"$req"; then
+            echo "::error::signed ad-hoc although the certificate was imported"
+            exit 1
+          fi
 
       - name: Name the DMG and check the tag
         id: dmg
