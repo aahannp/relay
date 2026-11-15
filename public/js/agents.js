@@ -546,7 +546,8 @@ function terminalPane(s, parent) {
 }
 
 // Select text in an agent's pane and ask it about that: a Reply button by the selection, Reply in the right-click menu,
-// or ⌘⇧R. The question is pasted in quoted, as if typed. Never in a shell, where it would run as a command.
+// or ⌘⇧' (not ⌘⇧R: the View menu's Force Reload takes that first). The question is pasted in quoted, as if typed.
+// Never in a shell, where it would run as a command.
 function replyToSelection(p, host) {
   const { term } = p;
   const body = host.parentElement;
@@ -559,7 +560,7 @@ function replyToSelection(p, host) {
     const w = r.width / term.cols, ht = r.height / term.rows;
     return { left: r.left + end.x * w, top: r.top + row * ht, bottom: r.top + (row + 1) * ht };
   };
-  const btn = h('button', { class: 'btn xs primary reply-btn', hidden: true, 'aria-label': 'Reply to selection', title: 'Ask the agent about this (⌘⇧R)',
+  const btn = h('button', { class: 'btn xs primary reply-btn', hidden: true, 'aria-label': 'Reply to selection', title: 'Ask the agent about this (⌘⇧\')',
     onMousedown: e => e.preventDefault(), onClick: () => open() }, icon('message', 12), 'Reply');
   body.append(btn);
   term.onSelectionChange(() => {
@@ -572,7 +573,7 @@ function replyToSelection(p, host) {
   });
   term.onScroll(() => { btn.hidden = true; });
   term.attachCustomKeyEventHandler(e => {
-    if (e.type !== 'keydown' || !e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey || e.code !== 'KeyR' || !term.hasSelection()) return true;
+    if (e.type !== 'keydown' || !e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey || e.code !== 'Quote' || !term.hasSelection()) return true;
     e.preventDefault();
     open();
     return false;
@@ -582,7 +583,7 @@ function replyToSelection(p, host) {
     if (!term.getSelection().trim()) return;
     e.preventDefault();
     menu({ getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX, bottom: e.clientY - 6 }) }, [
-      { label: 'Reply to selection', icon: 'message', sub: '⌘⇧R', onClick: open },
+      { label: 'Reply to selection', icon: 'message', sub: "⌘⇧'", onClick: open },
       { label: 'Copy', icon: 'copy', sub: '⌘C', onClick: () => copy(term.getSelection()) },
     ]);
   });
