@@ -11,12 +11,12 @@ import { start, processTree } from './server.mjs';
 import { createWorktree } from './lib/git.mjs';
 import { db, bus, migrate, DEFAULTS as STORE_DEFAULTS } from './lib/store.mjs';
 import * as T from './lib/team.mjs';
-import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose } from './lib/sessions.mjs';
+import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose, noteLimits, usageLimits } from './lib/sessions.mjs';
 import { THEMES } from './public/js/themes.js';
 import { transcriptContext } from './lib/transcripts.mjs';
 import { priceReply } from './lib/usage.mjs';
 import * as U from './lib/update.mjs';
-import { parseMarkdown, meterView } from './public/js/ui.js';
+import { parseMarkdown, meterView, resetLabel, limitChips } from './public/js/ui.js';
 import { stripDeskCookies } from './lib/cookies.mjs';
 import { randomUUID, createHash } from 'node:crypto';
 
@@ -364,6 +364,18 @@ try {
     assert.deepEqual([70, 71, 90, 91].map(pct => meterView({ ...m, used: pct * 10_000 }).level), ['', 'warn', 'warn', 'bad'], 'amber over 70%, red over 90%');
     assert.match(meterView({ ...m, used: 160_000, effective: 200_000 }).details, /Effective window: 200K[^]*model's is 1M/, 'an auto-compact window smaller than the model\'s is the one that counts');
     assert.deepEqual([meterView({ ...m, cost: 0, unpriced: 3 }).cost, meterView({ ...m, cost: 0 }).cost], ['', '$0.00'], 'no cost shown when nothing could be priced');
+    // Plan limits in the pane header: "2h 10m" under a day, weekday and time beyond, nothing once a window has passed.
+    const t0 = Date.parse('2026-11-15T10:00:00');
+    const at = (mins, w = {}) => ({ used: 42, resetsAt: t0 + mins * 60_000, ...w });
+    assert.deepEqual([resetLabel(t0 + 130 * 60_000, t0), resetLabel(t0 + 45 * 60_000, t0), resetLabel(t0 + 23 * 3_600_000, t0), resetLabel(t0 - 1, t0)], ['2h 10m', '45m', '23h 0m', ''], 'relative under 24 hours, empty once passed');
+    const later = new Date(t0 + 50 * 3_600_000);
+    assert.equal(resetLabel(+later, t0), `${later.toLocaleDateString('en-GB', { weekday: 'short' })} ${String(later.getHours()).padStart(2, '0')}:${String(later.getMinutes()).padStart(2, '0')}`, 'a day or more away: weekday and time');
+    const [five, seven] = limitChips({ session: at(130), weekly: at(50 * 60, { used: 18 }) }, t0);
+    assert.deepEqual([five.short, five.pct, five.text, five.level, seven.short, seven.pct, seven.level], ['5h', 42, '2h 10m', '', '7d', 18, ''], 'a chip per window');
+    assert.match(five.label, /^5-hour limit: 42% used, resets \w{3} 15 Nov 12:10$/, 'the exact reset time for the tooltip and aria-label');
+    assert.deepEqual([81, 80, 100].map(used => limitChips({ session: at(130, { used }) }, t0)[0].level), ['warn', '', 'bad'], 'amber over 80%, red at 100%');
+    assert.match(limitChips({ session: at(130, { used: 100 }) }, t0)[0].text, /^limit reached · resets 12:10$/);
+    assert.deepEqual([limitChips({}, t0), limitChips({ session: at(-5) }, t0), limitChips({ session: { used: 5 } }, t0)], [[], [], []], 'no data, a passed window, or no reset time: no chip');
   }
 
   // Resources: a process's usage is its own plus every descendant's, and nothing outside that subtree
@@ -1009,6 +1021,24 @@ esac
       "the meter is pushed over /api/events, against the lead's 400K auto-compact window Relay sets; this transcript's reply names no model, so it's unpriced");
     assert.deepEqual((await ok('GET', '/api/sessions')).find(x => x.id === s.id).meter, pushed.meter, 'and listed with the session, for a page that loads later');
     assert.equal((await ok('GET', '/api/sessions')).find(x => x.id === worker.id).meter, undefined, 'a pane whose status line never reported shows nothing');
+    // The status line's rate_limits are the account's: parsed, kept, pushed once per change, served at /api/limits.
+    const limitEvents = [];
+    const onLimits = e => e.type === 'limits' && limitEvents.push(e.limits);
+    bus.on('event', onLimits);
+    const rl = { five_hour: { used_percentage: 41.6, resets_at: 1_800_000_000 }, seven_day: { used_percentage: 18, resets_at: 1_800_500_000 } };
+    const both = { session: { used: 41.6, resetsAt: 1_800_000_000_000 }, weekly: { used: 18, resetsAt: 1_800_500_000_000 } };
+    assert.equal((await request('POST', '/api/context', { token: s.agentToken, body: { rate_limits: rl } })).status, 200);
+    assert.deepEqual(limitEvents, [both], 'both windows, reset times in ms, pushed');
+    assert.deepEqual(await ok('GET', '/api/limits'), both, 'and served for a page that loads later');
+    noteLimits(rl);
+    noteLimits(undefined);
+    noteLimits({ five_hour: { used_percentage: 'lots' }, seven_day: null });
+    assert.equal(limitEvents.length, 1, 'unchanged, missing or bad values: no new event, nothing lost');
+    noteLimits({ five_hour: { used_percentage: 120, resets_at: 1_800_000_100 } });
+    assert.deepEqual(usageLimits(), { session: { used: 100, resetsAt: 1_800_000_100_000 } }, 'one window missing is left out; over 100% is capped');
+    noteLimits({ seven_day: { used_percentage: -5 } });
+    assert.deepEqual(usageLimits(), { weekly: { used: 0 } }, 'no reset time: just the percentage');
+    bus.off('event', onLimits);
     fs.appendFileSync(transcript, `${line({ type: 'assistant', message: { content: [{ type: 'text', text: 'Planning the login work' }], usage: { input_tokens: 0, cache_read_input_tokens: 150_000, cache_creation_input_tokens: 0 } } })}\n`);
     await ok('PATCH', '/api/settings', { leadUpkeep: UP });
     assert.equal(effectiveWindow(s), 400_000, "the threshold is a % of the lead's own auto-compact window, 400K");

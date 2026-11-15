@@ -244,6 +244,33 @@ export function meterView(m) {
   };
 }
 
+// Your plan's usage limits in a pane header (see noteLimits in lib/sessions.mjs): "2h 10m" until a window resets,
+// under a day; beyond that the weekday and time ("Tue 09:00"). '' once it has passed. Local time, 24-hour.
+const clock = { hour: '2-digit', minute: '2-digit', hour12: false };
+export function resetLabel(resetsAt, now = Date.now()) {
+  const mins = Math.ceil((resetsAt - now) / 60_000);
+  if (!(mins > 0)) return '';
+  if (mins < 1440) return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+  return new Date(resetsAt).toLocaleString('en-GB', { weekday: 'short', ...clock });
+}
+const LIMIT_WINDOWS = [['session', '5h', '5-hour'], ['weekly', '7d', '7-day']];
+// The chips to show now: a window with no data, or whose reset has passed, is left out.
+export function limitChips(limits, now = Date.now()) {
+  return LIMIT_WINDOWS.flatMap(([key, short, long]) => {
+    const w = limits?.[key];
+    if (!w || !(w.resetsAt > now)) return [];
+    const pct = Math.round(w.used);
+    const full = new Date(w.resetsAt).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', ...clock }).replace(',', '');
+    const when = resetLabel(w.resetsAt, now);
+    const reached = pct >= 100;
+    return [{
+      key, short, pct, level: reached ? 'bad' : pct > 80 ? 'warn' : '', when,
+      text: reached ? `limit reached · resets ${new Date(w.resetsAt).toLocaleTimeString('en-GB', clock)}` : when,
+      label: `${long} limit: ${pct}% used, resets ${full}`,
+    }];
+  });
+}
+
 export function ago(t) {
   const s = Math.round((Date.now() - t) / 1000);
   if (s < 45) return 'just now';
