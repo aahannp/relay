@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Christie, learning coach · Relay</title>
+<meta name="description" content="Christie: Learning coach: when you want to learn something, teaches it step by step. A Relay built-in specialist, also usable as a Claude Code subagent.">
+<meta name="color-scheme" content="dark light">
+<link rel="canonical" href="https://aahannp.github.io/relay/team/christie.html">
+<meta property="og:title" content="Christie, learning coach · Relay">
+<meta property="og:description" content="Christie: Learning coach: when you want to learn something, teaches it step by step. A Relay built-in specialist, also usable as a Claude Code subagent.">
+<meta property="og:image" content="https://aahannp.github.io/relay/assets/relay-og.png">
+<link rel="icon" href="../assets/relay-favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../assets/relay-180.png">
+<script>try { const t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch {}</script>
+<link rel="stylesheet" href="../team/team.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="../"><span class="mark" aria-hidden="true"></span>Relay</a>
+    <nav class="nav-links" aria-label="Site">
+      <a href="../">Home</a>
+      <a href="../team.html" aria-current="page">Team</a>
+    </nav>
+    <button class="theme" id="themeToggle" type="button" aria-label="Switch to light mode">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    </button>
+    <a class="pill sm" data-download href="https://github.com/aahannp/relay/releases/latest">Download</a>
+  </div>
+</header>
+<main id="main">
+<div class="wrap narrow">
+  <a class="back" href="../team.html">‹ All specialists</a>
+  <header class="spec">
+    <h1>Christie <span class="badge">Can edit</span></h1>
+    <p class="lede">Learning coach. When you want to learn something, teaches it step by step.</p>
+    <p class="meta"><span>By Relay built-in</span><span>sonnet · medium effort</span></p>
+    <p class="tags"><span>learning</span><span>teaching</span><span>exercises</span></p>
+    <p class="lbl">Works with</p>
+    <p class="tags works"><span>Claude Code</span><span class="relay">Relay</span></p>
+  </header>
+
+  <dl class="runs">
+    <div><dt>Model</dt><dd>sonnet</dd></div>
+    <div><dt>Effort</dt><dd>medium</dd></div>
+    <div><dt>Access</dt><dd>Can edit files in its own worktree</dd></div>
+  </dl>
+
+  <section class="use" aria-labelledby="useTitle">
+    <h2 id="useTitle" class="sr-only">Use it</h2>
+    <div class="tabs" role="tablist" aria-label="Where to use Christie">
+      <button type="button" role="tab" id="t-relay" aria-controls="p-relay" aria-selected="true">In Relay</button>
+      <button type="button" role="tab" id="t-cc" aria-controls="p-cc" aria-selected="false" tabindex="-1">Claude Code subagent</button>
+    </div>
+    <div class="panel" role="tabpanel" id="p-relay" aria-labelledby="t-relay">
+      <p class="lbl">Ask the lead</p>
+      <div class="cmd"><code id="askLead">Have Christie do this: Teach me how git worktrees work, one small step at a time.</code><button type="button" class="copy" data-copy="askLead">Copy</button></div>
+      <p class="lbl">Or have an agent call the tool</p>
+      <div class="cmd"><code id="tool">start_agent {&quot;specialist&quot;: &quot;Christie&quot;, &quot;prompt&quot;: &quot;Teach me how git worktrees work, one small step at a time.&quot;}</code><button type="button" class="copy" data-copy="tool">Copy</button></div>
+      <p class="fine">Christie is built in: there's nothing to install. Change its model, effort or instructions in Relay's Team settings.</p>
+    </div>
+    <div class="panel" role="tabpanel" id="p-cc" aria-labelledby="t-cc">
+      <p class="lbl">Install into this project</p>
+      <div class="cmd"><code id="install">mkdir -p .claude/agents &amp;&amp; curl -fsSL https://aahannp.github.io/relay/team/agents/christie.md -o .claude/agents/christie.md</code><button type="button" class="copy" data-copy="install">Copy</button></div>
+      <p class="fine">Saves <code>.claude/agents/christie.md</code> in the current project; use <code>~/.claude/agents/</code> for every project. Outside Relay, the Relay-only tools it mentions (like start_agent or save_artifact) aren't there; the rest works as is.</p>
+    </div>
+  </section>
+
+  <p class="acts">
+    <button type="button" class="ghost" data-copy="file">Copy christie.md</button>
+    <a class="ghost" href="agents/christie.md" download="christie.md">Download christie.md</a>
+  </p>
+
+  <section class="viewer" aria-labelledby="fileTitle">
+    <header><h2 id="fileTitle">.claude/agents/christie.md</h2><button type="button" class="copy" data-copy="file">Copy</button></header>
+    <pre tabindex="0" aria-label="Christie's subagent file, with its full instructions"><code id="file">---
+name: christie
+description: &quot;Learning coach: when you want to learn something, teaches it step by step&quot;
+model: sonnet
+---
+
+You are a patient, encouraging learning coach. Your job is to help the user learn, not to do the work for them.
+- Start by finding out what they want to learn, why, and what they already know. Ask one question at a time.
+- Teach in small steps. Explain one idea in plain words with a concrete example, then check it landed with a quick question or a tiny exercise before moving on.
+- Adapt to their answers: when they're stuck, slow down and try a different example or analogy; when it's easy for them, skip ahead.
+- Prefer doing over reading. Give small hands-on exercises, in this folder or a scratch folder, and review what they write. Give hints before answers, and don't write their code for them unless they ask.
+- For a bigger topic, agree a short learning plan first and keep track of where they are in it.
+- When a lesson is worth keeping, make a clear one-page summary, cheat sheet or diagram as an HTML page and save it with save_artifact, so they can reread it in the Artifacts tab.
+- If they ask you to save what they learned to Task Notes, use its tools to add it to their learning bag. Only when they ask.
+- Be honest about what you're unsure of, and point to the official docs for depth.
+</code></pre>
+  </section>
+
+  <section class="when" aria-labelledby="whenTitle">
+    <h2 id="whenTitle">When to use it</h2>
+    <p>When you want to learn something, teaches it step by step.</p>
+    <p class="lbl">Example prompt</p>
+    <div class="cmd"><code id="ask">Teach me how git worktrees work, one small step at a time.</code><button type="button" class="copy" data-copy="ask">Copy</button></div>
+  </section>
+
+  <section class="related" aria-labelledby="relTitle">
+    <h2 id="relTitle">Related specialists</h2>
+    <div class="list">
+      <a class="card" href="../team/scout.html" data-model="haiku" data-access="read" data-find="scout quick code finder: for a fast, cheap answer to &quot;where is&quot; or &quot;how does&quot;, changes nothing search code reading quick answers">
+  <span class="card-main">
+    <span class="card-name"><b>Scout</b><span class="badge">Read-only</span></span>
+    <span class="card-role">Quick code finder. For a fast, cheap answer to &quot;where is&quot; or &quot;how does&quot;, changes nothing.</span>
+    <span class="tags"><span>search</span><span>code reading</span><span>quick answers</span></span>
+  </span>
+  <span class="card-run">haiku<small>low effort</small></span>
+</a>
+      <a class="card" href="../team/browner.html" data-model="opus" data-access="edit" data-find="browner frontend and browser expert: for ui work in html, css, javascript or react, accessibility and speed frontend accessibility performance">
+  <span class="card-main">
+    <span class="card-name"><b>Browner</b></span>
+    <span class="card-role">Frontend and browser expert. For UI work in HTML, CSS, JavaScript or React, accessibility and speed.</span>
+    <span class="tags"><span>frontend</span><span>accessibility</span><span>performance</span></span>
+  </span>
+  <span class="card-run">opus<small>high effort</small></span>
+</a>
+      <a class="card" href="../team/archie.html" data-model="opus" data-access="read" data-find="archie architect: before a change that spans several files or workers, designs it and splits it into tasks design planning tasks">
+  <span class="card-main">
+    <span class="card-name"><b>Archie</b><span class="badge">Read-only</span></span>
+    <span class="card-role">Architect. Before a change that spans several files or workers, designs it and splits it into tasks.</span>
+    <span class="tags"><span>design</span><span>planning</span><span>tasks</span></span>
+  </span>
+  <span class="card-run">opus<small>high effort</small></span>
+</a>
+    </div>
+    <a class="more" href="../team.html">All specialists</a>
+  </section>
+</div>
+</main>
+<footer>
+  <div class="wrap">
+    <p class="top">Claude Code is a trademark of Anthropic. Mac and Apple silicon are trademarks of Apple Inc.</p>
+    <div class="row">
+      <span>Relay · MIT licence</span>
+      <nav aria-label="Footer">
+        <a href="../">Home</a>
+        <a href="../team.html">Team</a>
+        <a href="https://github.com/aahannp/relay">GitHub</a>
+        <a href="https://github.com/aahannp/relay/releases">Releases</a>
+        <a href="https://github.com/aahannp/relay/issues">Issues</a>
+        <a href="../verify.html">Verify a download</a>
+        <a href="https://github.com/aahannp/relay/blob/main/LICENSE">Licence</a>
+      </nav>
+    </div>
+  </div>
+</footer>
+<script src="../team/team.js"></script>
+</body>
+</html>
