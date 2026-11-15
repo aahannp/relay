@@ -11,7 +11,7 @@ import { start, processTree } from './server.mjs';
 import { createWorktree } from './lib/git.mjs';
 import { db, bus, migrate, DEFAULTS as STORE_DEFAULTS } from './lib/store.mjs';
 import * as T from './lib/team.mjs';
-import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose } from './lib/sessions.mjs';
+import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose, deliver } from './lib/sessions.mjs';
 import { THEMES } from './public/js/themes.js';
 import { transcriptContext } from './lib/transcripts.mjs';
 import { priceReply } from './lib/usage.mjs';
@@ -1737,6 +1737,22 @@ esac
     await ok('POST', `/api/sessions/${r.id}/input`, { text: 'as\x01typed\n' });
     await new Promise(res => setTimeout(res, 300));
     assert.deepEqual(typed.splice(0), ['as\x01typed\n', '\r'], 'without the flag, what you type goes as it is');
+    // A prompt that shows up while a message waits its turn: the waiting one is dropped, not typed (its Enter would answer it)
+    for (const [how, send] of [['a reply', text => paste(text)], ['a message from an agent', async text => deliver(s, text)]]) {
+      await send('first');
+      await send('second');
+      await new Promise(res => s.term.write('\r\n 1. Yes\r\n 2. No\r\n', res));
+      await s.inbox;
+      assert.ok(!typed.some(t => t.includes('second')), `${how} queued before a prompt appeared isn't typed into it: ${JSON.stringify(typed)}`);
+      typed.length = 0;
+      await new Promise(res => s.term.write('moved on\r\n'.repeat(30), res)); // the prompt scrolls away
+    }
+    s.exited = true;
+    const finished = await paste('hi');
+    assert.deepEqual([finished.status, finished.body.error], [409, 'Replier has finished'], 'a pane that has exited says so, so the box keeps what you typed');
+    s.exited = false;
+    const source = fs.readFileSync(new URL('./public/js/agents.js', import.meta.url), 'utf8');
+    assert.match(source.slice(source.indexOf('function dispose(')).split('\n}')[0], /\.reply-pop\[data-pane=.*close\(\)/, "closing a pane closes its open reply box");
     await mode(false);
     s.pty.write = write;
     await ok('DELETE', `/api/sessions/${r.id}`);

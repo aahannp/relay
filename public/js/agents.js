@@ -597,7 +597,7 @@ function replyToSelection(p, host) {
     const input = h('textarea', { class: 'input', rows: 2, placeholder: 'Ask about this…', 'aria-label': 'Your question about the selected text' });
     const err = h('div', { class: 'reply-err', role: 'alert' });
     const sendBtn = h('button', { class: 'btn xs primary', onClick: () => send() }, icon('send', 12), 'Send');
-    const pop = h('div', { class: 'reply-pop', role: 'dialog', 'aria-label': `Reply to ${chatTitle(p.session)} about the selected text` },
+    const pop = h('div', { class: 'reply-pop', 'data-pane': p.id, role: 'dialog', 'aria-label': `Reply to ${chatTitle(p.session)} about the selected text` },
       h('div', { class: 'reply-quote', tabindex: 0, 'aria-label': 'Selected text' }, sel.replace(/\s+$/, '')),
       input, err,
       h('div', { class: 'reply-row' },
@@ -776,6 +776,7 @@ function dispose(id) {
   panes.delete(id);
   hidden.delete(id);
   if (p.ws) { p.ws.onclose = null; p.ws.close(); }
+  document.querySelector(`.reply-pop[data-pane="${id}"]`)?.close(); // a reply box left open for it
   p.term?.dispose();
   p.peek?.dispose();
   if (p.el.classList.contains('max')) unmaximise();
