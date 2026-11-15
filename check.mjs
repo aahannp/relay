@@ -338,6 +338,7 @@ try {
   assert.equal(settingsOf(command({ ...base, resume: false }, '', null).args).autoCompactWindow, undefined, 'or your settings.json does');
   assert.match(hooks.PostToolUse[0].hooks[0].command, /\/api\/touched/, 'every file an agent edits is reported');
   assert.match(hooks.Stop[0].hooks[0].command, /\/api\/turn-ended/, 'and the end of each turn');
+  assert.deepEqual([hooks.Notification[0].matcher, /\/api\/needs-you/.test(hooks.Notification[0].hooks[0].command)], ['permission_prompt', true], 'and each permission prompt');
   assert.deepEqual(settingsOf(fresh).attribution, { commit: 'Generated via Relay', pr: 'Generated via Relay' }, 'commits and PRs say Relay made them');
   process.env.CLAUDE_CODE_CHILD_SESSION = '1';
   assert.ok(!('CLAUDE_CODE_CHILD_SESSION' in command({ ...base, resume: false }, '', null).env), "an agent never inherits Claude Code's child-session flag, which turns transcript saving off");
@@ -1074,12 +1075,15 @@ esac
     fs.rmSync(path.join(claudeHome, 'settings.json'));
     s.compactWindow = 200_000; // as if it had started with the lead's window at 200K
     assert.equal(effectiveWindow(s), 200_000, "with the lead's window at 200K, 150K is 75%");
-    for (const [why, ...screen] of [['working a moment ago', '', undefined, 5000], ['you are typing', '', ' hello'], ['a spinner is up', '✶ Tempering…'],
-      ['a permission prompt is up', 'Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No\r\n']]) {
+    for (const [why, ...screen] of [['working a moment ago', '', undefined, 5000], ['you are typing', '', ' hello'], ['a spinner is up', '✶ Tempering…']]) {
       await paint(...screen);
       await upkeep();
       assert.ok(!(await compacted()), `over the threshold but ${why}: nothing`);
     }
+    // A permission prompt: Claude Code draws its menu in place of the input box
+    await new Promise(res => s.term.write('\x1b[3J\x1b[2J\x1b[HDo you want to proceed?\r\n ❯ 1. Yes\r\n   2. No\r\n', () => res(s.lastOutputAt = Date.now() - 25_000)));
+    await upkeep();
+    assert.ok(!(await compacted()), 'over the threshold but a permission prompt is up: nothing');
     s.term.write('\x1b[3J\x1b[2J\x1b[H', () => (s.lastOutputAt = Date.now() - 25_000));
     await upkeep();
     assert.ok(!(await compacted()), "a screen it can't read: nothing");
@@ -1697,7 +1701,7 @@ esac
   await ok('DELETE', `/api/sessions/${careful.id}`);
   await ok('PATCH', '/api/settings', { agentsAutonomous: true });
 
-  await ok('POST', `/api/sessions/${christieId}/input`, { text: 'Do you want to proceed?  1. Yes  2. No' }); // you can type anything
+  await ok('POST', `/api/sessions/${christieId}/input`, { text: 'Do you want to proceed?  ❯ 1. Yes  2. No' }); // you can type anything
   await screenOf(christieId, /2\. No/, 'a prompt on screen');
   const blocked = await say('Christie', 'Press enter for me');
   assert.equal(blocked.status, 409, 'nothing is typed into a permission prompt');
@@ -1795,7 +1799,7 @@ esac
     await new Promise(res => setTimeout(res, 300));
     assert.deepEqual(typed.splice(0), ['as\x01typed\n', '\r'], 'without the flag, what you type goes as it is');
     // A prompt that shows up while a message waits its turn: the waiting one is dropped, not typed (its Enter would answer it)
-    const showPrompt = () => new Promise(res => s.term.write('\r\n 1. Yes\r\n 2. No\r\n', res));
+    const showPrompt = () => new Promise(res => s.term.write('\r\n ❯ 1. Yes\r\n   2. No\r\n', res));
     const hidePrompt = () => new Promise(res => s.term.write('moved on\r\n'.repeat(30), res)); // it scrolls away
     for (const [how, send] of [['a reply', text => paste(text)], ['a message from an agent', async text => deliver(s, text)]]) {
       let release;
@@ -1843,6 +1847,31 @@ esac
     assert.equal(typed.splice(0).length, 1, "an agent's message: pasted, then no Enter");
     assert.deepEqual([lateMsg.status, lateMsg.body.error], [409, "A prompt appeared in Replier's pane, so the message wasn't sent (it may sit typed in their input). Try again once the user has answered it."], 'and its sender is told it was typed but not sent');
     await hidePrompt();
+    // Claude Code's screen: messages, then the input box, where what you paste goes. Its permission menu takes the box's place.
+    const box = text => `${'─'.repeat(60)}\r\n❯ ${text.replace(/\n/g, '\r\n  ')}\r\n${'─'.repeat(60)}\r\n  ⏵⏵ auto mode on\r\n`;
+    const draw = text => new Promise(res => s.term.write(`\x1b[3J\x1b[2J\x1b[H${text}`, res));
+    const menu = 'Do you want to proceed?\r\n ❯ 1. Yes\r\n   2. No\r\n\r\n Esc to cancel\r\n';
+    const inBox = d => d.startsWith('\x1b[200~') && draw(`● Done.\r\n\r\n${box(d.slice(6, -6))}`);
+    await draw(`● Pick one:\r\n ❯ 1. Yes\r\n   2. No\r\n\r\n${box('')}`);
+    s.pty.write = d => { typed.push(d); inBox(d); };
+    assert.equal((await fromPeer({ text: 'hi' })).status, 200, "the option lines in an agent's own message, above its input box, are no prompt");
+    assert.equal(typed.splice(0).at(-1), '\r', 'so the message is sent');
+    assert.equal((await fromPeer({ text: 'Which?\n❯ 1. Yes\n2. No' })).status, 200, 'a message with the option lines in it is typed');
+    assert.equal(typed.splice(0).at(-1), '\r', 'and sent: the lines it pasted into the input box are no prompt');
+    assert.equal((await paste('Which?\n❯ 1. Yes\n2. No')).status, 200, 'a reply with them too');
+    assert.equal(typed.splice(0).at(-1), '\r');
+    s.pty.write = d => { typed.push(d); inBox(d) && draw(`● Done.\r\n\r\n${menu}`); };
+    assert.equal((await fromPeer({ text: 'Which?\n❯ 1. Yes\n2. No' })).status, 409, 'a real menu drawn between the paste and the Enter still stops the Enter');
+    assert.equal(typed.splice(0).length, 1, 'only the paste went');
+    assert.equal((await fromPeer({ text: 'hi' })).status, 409, 'and the menu on screen stops the next message');
+    assert.deepEqual(typed, []);
+    s.pty.write = d => { typed.push(d); inBox(d); };
+    await draw(`● Done.\r\n\r\n${box('')}`);
+    assert.equal((await request('POST', '/api/needs-you', { token: s.agentToken })).status, 200);
+    assert.equal((await fromPeer({ text: 'hi' })).status, 409, "Claude Code's permission notification (its hook) holds messages too, whatever the screen shows");
+    assert.deepEqual(typed, []);
+    s.attention = false;
+    assert.equal((await fromPeer({ text: 'hi' })).status, 200, 'and once answered, messages get through');
     s.pty.write = d => { typed.push(d); write(d); };
     await ok('DELETE', `/api/sessions/${peer.id}`);
     s.agent = 'codex';

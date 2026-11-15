@@ -55,7 +55,7 @@ function sameSite(req) {
   return !origin || LOCAL.has(origin.replace(/^https?:\/\//, ''));
 }
 
-const AGENT_ROUTES = new Set(['POST /mcp', 'POST /api/claude-session', 'POST /api/touched', 'POST /api/context', 'POST /api/news', 'POST /api/turn-ended']);
+const AGENT_ROUTES = new Set(['POST /mcp', 'POST /api/claude-session', 'POST /api/touched', 'POST /api/context', 'POST /api/news', 'POST /api/turn-ended', 'POST /api/needs-you']);
 // { kind: 'ui' } for the master token, { kind: 'agent', session } for an agent's token on one of
 // AGENT_ROUTES (header only, never a cookie or ?t=), otherwise null: anywhere else an agent token counts for nothing.
 function auth(req, url) {
@@ -268,6 +268,14 @@ route('POST', '/api/news', ({ req }) => {
   if (!s) throw fail(404, 'Unknown session');
   const text = S.news(s);
   return { raw: text ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: text } }) : '', type: 'application/json' };
+});
+
+// Claude's Notification hook, for a permission prompt only: the pane waits for you (see flag).
+route('POST', '/api/needs-you', ({ req }) => {
+  const s = caller(req);
+  if (!s) throw fail(404, 'Unknown session');
+  S.flag(s);
+  return {};
 });
 
 // Claude's Stop hook: a turn is done. A worker another agent started reports to it, then closes (see turnEnded).
