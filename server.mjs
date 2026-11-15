@@ -595,6 +595,7 @@ route('GET', '/api/update', ({ query }) => U.status(query.get('force') === '1'))
 route('POST', '/api/update/download', ({ req }) => (notFromAgent(req, 'download updates'), U.autoOn() ? U.prepare() : U.download()));
 route('POST', '/api/update/install', ({ req }) => (notFromAgent(req, 'install updates'), U.restart()));
 route('POST', '/api/update/show', () => U.reveal());
+route('POST', '/api/privacy-settings', () => new Promise(resolve => execFile('open', [S.PRIVACY_URL], () => resolve({}))));
 
 // Resources: CPU and memory right now for Relay's whole process tree (in the Mac app that includes Electron's
 // GPU, renderer and helpers), each running pane's tree, and the rest as Relay itself. Settings polls it.
@@ -997,6 +998,8 @@ async function respond(req, res) {
       }
       return json(200, result ?? {});
     } catch (e) {
+      // One shared place for every route: say what macOS is doing instead of a raw "EPERM: operation not permitted".
+      if (S.macBlocked(e)) return json(e.status || 500, { error: S.blockedText(e.path || 'this folder'), blocked: e.path || 'this folder' });
       return json(e.status || 500, { error: e.message });
     }
   }

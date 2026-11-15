@@ -11,7 +11,7 @@ import { start, processTree } from './server.mjs';
 import { createWorktree } from './lib/git.mjs';
 import { db, bus, migrate, DEFAULTS as STORE_DEFAULTS } from './lib/store.mjs';
 import * as T from './lib/team.mjs';
-import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose, deliver, noteLimits, usageLimits, HANDOFF } from './lib/sessions.mjs';
+import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose, deliver, noteLimits, usageLimits, HANDOFF, macBlocked, warnIfBlocked } from './lib/sessions.mjs';
 import { THEMES } from './public/js/themes.js';
 import { transcriptContext } from './lib/transcripts.mjs';
 import { priceReply } from './lib/usage.mjs';
@@ -2178,6 +2178,39 @@ esac
     down?.fn({ button: 4, preventDefault: () => stopped.push('default'), stopPropagation: () => stopped.push('propagation') });
     assert.deepEqual([down?.capture, stopped], [true, ['default', 'propagation']], 'the forward mouse button never reaches the pane under the pointer, which would record it before going forward');
     assert.ok(!/accent|#[0-9a-f]{3,6}\b/i.test(fs.readFileSync(new URL('./public/app.css', import.meta.url), 'utf8').match(/\.nav-history[^\n]*/g).join('')), 'the buttons use the existing tokens, no pink');
+  }
+  if (process.platform === 'darwin') {
+    // Only macOS privacy (EPERM in a protected folder) gets the "macOS is blocking Relay" message; other errors stay as they are
+    const home = os.homedir();
+    assert.deepEqual([
+      macBlocked({ code: 'EPERM', path: path.join(home, 'Desktop', '.agent-desk', 'shots') }),
+      macBlocked({ code: 'EPERM', path: path.join(home, 'Downloads') }),
+      macBlocked({ code: 'EPERM', path: path.join(home, 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'p') }),
+      macBlocked({ code: 'EPERM', path: '/Volumes/USB/p' }),
+    ], [true, true, true, true], 'EPERM in Desktop, Downloads, iCloud Drive or a removable drive is macOS privacy');
+    assert.deepEqual([
+      macBlocked({ code: 'EACCES', path: path.join(home, 'Desktop', 'p') }),
+      macBlocked({ code: 'EPERM', path: path.join(tmp, 'p') }),
+      macBlocked({ code: 'EPERM', path: path.join(home, 'Desktopper') }),
+      macBlocked({ code: 'ENOENT', path: path.join(home, 'Documents') }),
+    ], [false, false, false, false], 'plain permissions, other folders and other errors are not');
+    const shotsDir = path.join(repo, '.agent-desk', 'shots');
+    fs.mkdirSync(shotsDir, { recursive: true });
+    fs.chmodSync(shotsDir, 0o000);
+    try {
+      const r = await request('GET', `/api/shots?project=${encodeURIComponent(repo)}`);
+      assert.deepEqual([r.body.blocked, /^EACCES/.test(r.body.error)], [undefined, true], 'a folder that is just chmod 000 keeps its normal error');
+      assert.equal(await warnIfBlocked(shotsDir), false, 'and opening a pane there warns about nothing');
+    } finally {
+      fs.chmodSync(shotsDir, 0o755);
+    }
+    const ui = fs.readFileSync(new URL('./public/js/ui.js', import.meta.url), 'utf8');
+    const once = new Function('toast', 'api', 'on', `${ui.match(/\nconst blockedShown[^]*?\non\('mac-blocked'.*\n/)[0].replace(/^export /m, '')}; return { macBlocked, quiet };`);
+    const shown = [];
+    const { macBlocked: showBlocked, quiet } = once((...a) => shown.push(a), () => {}, () => {});
+    showBlocked('/d', 'blocked /d');
+    showBlocked('/d', 'blocked /d');
+    assert.deepEqual([shown.length, shown[0][2].label, quiet.has('blocked /d')], [1, 'Open Settings', true], 'one warning per folder, with the Settings button; later errors with that text stay quiet');
   }
   console.log('All checks passed');
 } finally {
