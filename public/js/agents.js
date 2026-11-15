@@ -1,5 +1,5 @@
 // Agents view: every agent, shell and browser pane for the project, tiled in a grid of real terminals.
-import { state, api, h, icon, avatar, on, emit, toast, guard, actions, command, commands, menu, askText, modal, confirmDialog, agentLabel, shortBranch, baseName, copy, quoteReply, chatTitle, meterView, openSpaces, spaceSummary, DRAG, MONO, STATUS_LABEL } from './ui.js';
+import { state, api, h, icon, avatar, on, emit, toast, guard, actions, command, commands, menu, askText, modal, confirmDialog, agentLabel, shortBranch, baseName, copy, quoteReply, chatTitle, meterView, limitChips, openSpaces, spaceSummary, DRAG, MONO, STATUS_LABEL } from './ui.js';
 
 const panes = new Map(); // id -> pane (a session's terminal, or a browser)
 const seen = new Map(); // session id -> last status we told you about
@@ -495,13 +495,14 @@ function terminalPane(s, parent) {
   const sub = h('span', { class: 'pane-sub' });
   const face = h('span', {});
   const meter = h('span', { class: 'meter', role: 'meter', 'aria-label': 'Context and cost', 'aria-valuemin': 0, 'aria-valuemax': 100, tabindex: 0, hidden: true });
+  const limitsEl = h('span', { class: 'limits', hidden: true });
   const host = h('div', { class: 'term-host' });
   const blocks = h('div', { class: 'blocks' });
   const exitBar = h('div', { class: 'exit-bar' });
   const id = s.id;
   const blocksBtn = s.kind === 'shell' && h('button', { class: 'icon-btn', title: 'Command blocks', onClick: () => blocksBtn.classList.toggle('on', el.classList.toggle('show-blocks')) }, icon('list', 15));
   const head = h('div', { class: 'pane-head', draggable: true, title: 'Drag to move this pane', onDragstart: e => dragPane(e, id), onDragend: () => el.classList.remove('dragging'), onDblclick: e => !e.target.closest('button') && toggleMaximise(id) },
-    face, h('div', { class: 'pane-titles' }, title, sub), meter, state_,
+    face, h('div', { class: 'pane-titles' }, title, sub), meter, limitsEl, state_,
     h('div', { class: 'pane-tools' },
       blocksBtn,
       s.chatId && h('button', { class: 'icon-btn', title: 'Name this agent', onClick: () => renameAgent(s) }, icon('pen', 13)),
@@ -520,7 +521,7 @@ function terminalPane(s, parent) {
     term.loadAddon(webgl);
   } catch {}
 
-  const p = { id, kind: 'term', docked: Boolean(parent), el, term, dot, state: state_, stateText, title, sub, face, meter, exitBar, blocksEl: blocks, session: s, lastData: 0, ws: null, size: '' };
+  const p = { id, kind: 'term', docked: Boolean(parent), el, term, dot, state: state_, stateText, title, sub, face, meter, limitsEl, exitBar, blocksEl: blocks, session: s, lastData: 0, ws: null, size: '' };
   p.send = data => p.ws?.readyState === WebSocket.OPEN && p.ws.send(JSON.stringify({ t: 'in', d: data }));
   p.fit = () => {
     if (!host.offsetWidth) return;
@@ -677,6 +678,20 @@ on('meter', e => {
   if (p?.kind === 'term') renderMeter(p);
 });
 
+// Your plan's 5-hour and 7-day limits, account-wide, in every Claude pane's header: "5h 42% · 2h 10m". One copy of
+// the data and one minute timer for the page, as the relative time counts down and a window past its reset goes.
+let planLimits = {};
+function renderLimits(p) {
+  const chips = p.session.kind === 'shell' ? [] : limitChips(planLimits);
+  p.limitsEl.hidden = !chips.length;
+  p.limitsEl.replaceChildren(...chips.map(c => h('span', { class: `limit limit-${c.key} ${c.level}`, role: 'group', tabindex: 0, title: c.label, 'aria-label': c.label },
+    h('span', { class: 'limit-name' }, c.short), h('span', { class: 'limit-pct' }, ` ${c.pct}%`), c.text && h('span', { class: 'limit-when' }, ` · ${c.text}`))));
+}
+const renderAllLimits = () => panes.forEach(p => p.kind === 'term' && renderLimits(p));
+on('limits', e => { planLimits = e.limits ?? {}; renderAllLimits(); });
+api('GET', '/api/limits').then(l => { planLimits = l ?? {}; renderAllLimits(); }, () => {});
+setInterval(renderAllLimits, 60_000);
+
 function renderHead(p) {
   const s = p.session;
   p.title.textContent = chatTitle(s);
@@ -689,6 +704,7 @@ function renderHead(p) {
     s.taskId && h('button', { title: 'Open the task', onClick: () => actions.openTask?.(s.taskId) }, 'task'),
   ].filter(Boolean));
   renderMeter(p);
+  renderLimits(p);
   p.el.classList.toggle('exited', s.exited);
   p.el.classList.toggle('attn', s.status === 'needs-input');
   if (s.exited && !p.exitBar.childElementCount) {

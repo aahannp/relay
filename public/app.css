@@ -377,6 +377,17 @@ textarea.input { resize: vertical; min-height: 84px; line-height: 1.55; }
 .meter.warn .meter-cost, .meter.bad .meter-cost { color: var(--dim); }
 @container (max-width: 520px) { .meter-cost { display: none; } }
 @container (max-width: 400px) { .meter { display: none; } }
+/* Plan limits ("5h 42% · 2h 10m"), after the meter: amber over 80%, red at 100%. A narrow pane drops the percentages first,
+   then the 7-day chip, then both, so its buttons never move. */
+.limits { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; font: 500 10.5px var(--mono); font-variant-numeric: tabular-nums; color: var(--dim); white-space: nowrap; }
+.limits[hidden] { display: none; }
+.limit { border-radius: 6px; cursor: default; }
+.limit-name { color: var(--text); opacity: .75; }
+.limit.warn { color: var(--warn); } .limit.bad { color: var(--bad); }
+.limit.warn .limit-name, .limit.bad .limit-name { color: inherit; opacity: 1; }
+@container (max-width: 640px) { .limit-pct { display: none; } }
+@container (max-width: 520px) { .limit-weekly { display: none; } }
+@container (max-width: 440px) { .limits { display: none; } }
 .pane-body { position: relative; flex: 1; min-height: 0; display: flex; }
 /* content-box: xterm's fit addon reads this box's CSS width and height as the space to fill, so the padding must not be
    counted in them, or the last column slides under the scrollbar and the bottom row past the edge. */
