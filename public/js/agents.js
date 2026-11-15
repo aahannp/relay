@@ -1,5 +1,5 @@
 // Agents view: every agent, shell and browser pane for the project, tiled in a grid of real terminals.
-import { state, api, h, icon, avatar, on, emit, toast, guard, actions, command, commands, menu, askText, modal, confirmDialog, agentLabel, shortBranch, baseName, copy, chatTitle, meterView, openSpaces, spaceSummary, DRAG, MONO, STATUS_LABEL } from './ui.js';
+import { state, api, h, icon, avatar, on, emit, toast, guard, actions, command, commands, menu, askText, modal, confirmDialog, agentLabel, shortBranch, baseName, copy, quoteReply, chatTitle, meterView, openSpaces, spaceSummary, DRAG, MONO, STATUS_LABEL } from './ui.js';
 
 const panes = new Map(); // id -> pane (a session's terminal, or a browser)
 const seen = new Map(); // session id -> last status we told you about
@@ -538,10 +538,101 @@ function terminalPane(s, parent) {
   p.peek = smoothScroll(term, host);
   new ResizeObserver(() => p.fit()).observe(host);
   if (s.kind === 'shell') commandBlocks(p);
+  else replyToSelection(p, host);
   connect(p);
   panes.set(id, p);
   layout();
   return p;
+}
+
+// Select text in an agent's pane and ask it about that: a Reply button by the selection, Reply in the right-click menu,
+// or ⌘⇧R. The question is pasted in quoted, as if typed. Never in a shell, where it would run as a command.
+function replyToSelection(p, host) {
+  const { term } = p;
+  const body = host.parentElement;
+  // The selection's last cell, on the page; null when that row is scrolled out of view.
+  const endCell = () => {
+    const end = term.getSelectionPosition()?.end;
+    const r = host.querySelector('.xterm-screen')?.getBoundingClientRect();
+    const row = end && end.y - term.buffer.active.viewportY;
+    if (!r || !end || row < 0 || row >= term.rows) return null;
+    const w = r.width / term.cols, ht = r.height / term.rows;
+    return { left: r.left + end.x * w, top: r.top + row * ht, bottom: r.top + (row + 1) * ht };
+  };
+  const btn = h('button', { class: 'btn xs primary reply-btn', hidden: true, 'aria-label': 'Reply to selection', title: 'Ask the agent about this (⌘⇧R)',
+    onMousedown: e => e.preventDefault(), onClick: () => open() }, icon('message', 12), 'Reply');
+  body.append(btn);
+  term.onSelectionChange(() => {
+    const c = term.getSelection().trim() && endCell();
+    btn.hidden = !c;
+    if (!c) return;
+    const b = body.getBoundingClientRect();
+    btn.style.left = `${Math.max(4, Math.min(c.left - b.left, b.width - btn.offsetWidth - 6))}px`;
+    btn.style.top = `${Math.min(c.bottom - b.top + 4, b.height - btn.offsetHeight - 6)}px`;
+  });
+  term.onScroll(() => { btn.hidden = true; });
+  term.attachCustomKeyEventHandler(e => {
+    if (e.type !== 'keydown' || !e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey || e.code !== 'KeyR' || !term.hasSelection()) return true;
+    e.preventDefault();
+    open();
+    return false;
+  });
+  // There was no right-click menu here: only with a selection, so a right-click without one behaves as before.
+  host.addEventListener('contextmenu', e => {
+    if (!term.getSelection().trim()) return;
+    e.preventDefault();
+    menu({ getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX, bottom: e.clientY - 6 }) }, [
+      { label: 'Reply to selection', icon: 'message', sub: '⌘⇧R', onClick: open },
+      { label: 'Copy', icon: 'copy', sub: '⌘C', onClick: () => copy(term.getSelection()) },
+    ]);
+  });
+
+  function open() {
+    const sel = term.getSelection();
+    if (!sel.trim()) return;
+    btn.hidden = true;
+    document.querySelector('.reply-pop')?.close();
+    const at = endCell() ?? (r => ({ left: r.left + 24, bottom: r.top + r.height / 3 }))(host.getBoundingClientRect());
+    const input = h('textarea', { class: 'input', rows: 2, placeholder: 'Ask about this…', 'aria-label': 'Your question about the selected text' });
+    const err = h('div', { class: 'reply-err', role: 'alert' });
+    const sendBtn = h('button', { class: 'btn xs primary', onClick: () => send() }, icon('send', 12), 'Send');
+    const pop = h('div', { class: 'reply-pop', role: 'dialog', 'aria-label': `Reply to ${chatTitle(p.session)} about the selected text` },
+      h('div', { class: 'reply-quote', tabindex: 0, 'aria-label': 'Selected text' }, sel.replace(/\s+$/, '')),
+      input, err,
+      h('div', { class: 'reply-row' },
+        h('span', { class: 'reply-hint' }, 'Enter to send · Shift+Enter for a new line'),
+        h('button', { class: 'btn xs', onClick: () => close() }, 'Cancel'), sendBtn));
+    const outside = e => !pop.contains(e.target) && close(false);
+    function close(refocus = true) {
+      pop.remove();
+      document.removeEventListener('mousedown', outside, true);
+      if (refocus) term.focus();
+    }
+    pop.close = () => close(false);
+    async function send() {
+      if (!input.value.trim()) return input.focus();
+      sendBtn.disabled = true;
+      err.textContent = '';
+      try {
+        await api('POST', `/api/sessions/${p.id}/input`, { text: quoteReply(sel, input.value), paste: true });
+        term.clearSelection();
+        close();
+      } catch (e) {
+        err.textContent = e.message; // what you typed stays, to send once you've answered the prompt
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    }
+    pop.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+      else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target === input) { e.preventDefault(); send(); }
+    });
+    document.body.append(pop);
+    pop.style.left = `${Math.max(8, Math.min(at.left - 24, innerWidth - pop.offsetWidth - 8))}px`;
+    pop.style.top = `${Math.max(8, Math.min(at.bottom + 6, innerHeight - pop.offsetHeight - 8))}px`;
+    document.addEventListener('mousedown', outside, true);
+    input.focus();
+  }
 }
 
 // Each (re)connect gets a fresh copy of the screen from the server, so clear before drawing it.

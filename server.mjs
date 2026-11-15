@@ -356,7 +356,7 @@ route('GET', '/api/sessions/:id/output', ({ req, params, query }) =>
 // agent in its own project, never a shell or a permission prompt.
 route('POST', '/api/sessions/:id/input', async ({ req, params, body }) => {
   const text = String(body.text ?? '');
-  if (!fromAgent(req)) return (S.send(findSession(params.id), text, body.submit !== false), {});
+  if (!fromAgent(req)) return ((body.paste ? S.paste : S.send)(findSession(params.id), text, body.submit !== false), {});
   mayMessage(req);
   const from = caller(req);
   const closed = from && !S.sessions.has(params.id) && closedWorker(from.project, params.id);

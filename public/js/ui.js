@@ -170,6 +170,16 @@ export function askText(title, { label = '', value = '', placeholder = '', ok = 
   });
 }
 
+// Your reply to text selected in a pane: each line quoted with "> " (trailing spaces trimmed), a blank line, then what you
+// asked. A selection past 2,000 characters keeps its first 2,000 and says how many lines were cut.
+export function quoteReply(selection, text) {
+  const sel = selection.replace(/\r\n?/g, '\n').replace(/\s+$/, '');
+  const cut = sel.length > 2000 ? sel.slice(2000).split('\n').length : 0;
+  const lines = sel.slice(0, 2000).replace(/\s+$/, '').split('\n').map(line => `> ${line}`.trimEnd());
+  if (cut) lines.push(`> (${cut} more line${cut === 1 ? '' : 's'} cut)`);
+  return `${lines.join('\n')}\n\n${text.trim()}`;
+}
+
 // A dropdown under `anchor`. Items: { label, icon, sub, onClick, disabled }, 'sep', or { heading }.
 export function menu(anchor, items, { align = 'left' } = {}) {
   document.querySelector('.menu')?.remove();

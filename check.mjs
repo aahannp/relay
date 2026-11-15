@@ -16,7 +16,7 @@ import { THEMES } from './public/js/themes.js';
 import { transcriptContext } from './lib/transcripts.mjs';
 import { priceReply } from './lib/usage.mjs';
 import * as U from './lib/update.mjs';
-import { parseMarkdown, meterView } from './public/js/ui.js';
+import { parseMarkdown, meterView, quoteReply } from './public/js/ui.js';
 import { stripDeskCookies } from './lib/cookies.mjs';
 import { randomUUID, createHash } from 'node:crypto';
 
@@ -1708,6 +1708,39 @@ esac
   assert.deepEqual(db.groups, [], 'and you can');
   assert.equal((await type(asker.id, 'one more', christieId)).status, 429, 'send_to_agent counts toward it too');
   for (const id of [asker.id, christieId]) await ok('DELETE', `/api/sessions/${id}`);
+
+  // Replying to a selection in a pane: the text quoted, then your question, pasted whole and sent, never into a prompt
+  {
+    assert.equal(quoteReply('first  \r\nsecond\n\n  third \n\n', ' Why? '), '> first\n> second\n>\n>   third\n\nWhy?', 'each line quoted, trailing spaces gone, then a blank line and the question');
+    assert.equal(quoteReply('y'.repeat(2500), 'q'), `> ${'y'.repeat(2000)}\n> (1 more line cut)\n\nq`, 'a long selection keeps its first 2,000 characters');
+    assert.equal(quoteReply(`${'z'.repeat(1999)}\nb\nc\nd`, 'q'), `> ${'z'.repeat(1999)}\n> (3 more lines cut)\n\nq`, 'and says how many lines it cut');
+    const r = await ok('POST', '/api/sessions', { kind: 'agent', agent: 'claude', project: repo, name: 'Replier' });
+    await screenOf(r.id, /FAKE-CLAUDE/, 'it has started');
+    const s = sessions.get(r.id);
+    const typed = [];
+    const write = s.pty.write.bind(s.pty);
+    s.pty.write = d => { typed.push(d); write(d); };
+    const paste = text => request('POST', `/api/sessions/${r.id}/input`, { body: { text, paste: true } });
+    const mode = on => new Promise(res => s.term.write(`\x1b[?2004${on ? 'h' : 'l'}`, res));
+    assert.equal((await paste('> a\n> b\n\nwhy\x1b[201~\x03?')).status, 200);
+    await s.inbox;
+    assert.deepEqual(typed.splice(0), ['> a > b why[201~?', '\r'], 'without bracketed paste, the lines are joined, control characters go, then Enter');
+    await mode(true);
+    assert.equal((await paste('> a\n> b\n\nwhy')).status, 200);
+    await s.inbox;
+    assert.deepEqual(typed.splice(0), ['\x1b[200~> a\n> b\n\nwhy\x1b[201~', '\r'], 'with it, one paste of every line, then Enter');
+    s.attention = true; // a permission prompt
+    const refused = await paste('hi');
+    assert.deepEqual([refused.status, refused.body.error], [409, 'Answer the prompt in the pane first'], 'never into a prompt');
+    assert.deepEqual(typed, [], 'nothing typed');
+    s.attention = false;
+    await ok('POST', `/api/sessions/${r.id}/input`, { text: 'as\x01typed\n' });
+    await new Promise(res => setTimeout(res, 300));
+    assert.deepEqual(typed.splice(0), ['as\x01typed\n', '\r'], 'without the flag, what you type goes as it is');
+    await mode(false);
+    s.pty.write = write;
+    await ok('DELETE', `/api/sessions/${r.id}`);
+  }
 
   // Spaces: another project folder answers one question, and nothing else crosses the wall
   {
