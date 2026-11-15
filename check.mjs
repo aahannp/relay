@@ -1714,7 +1714,9 @@ esac
     assert.equal(quoteReply('first  \r\nsecond\n\n  third \n\n', ' Why? '), '> first\n> second\n>\n>   third\n\nWhy?', 'each line quoted, trailing spaces gone, then a blank line and the question');
     assert.equal(quoteReply('y'.repeat(2500), 'q'), `> ${'y'.repeat(2000)}\n> (1 more line cut)\n\nq`, 'a long selection keeps its first 2,000 characters');
     assert.equal(quoteReply(`${'z'.repeat(1999)}\nb\nc\nd`, 'q'), `> ${'z'.repeat(1999)}\n> (3 more lines cut)\n\nq`, 'and says how many lines it cut');
-    const r = await ok('POST', '/api/sessions', { kind: 'agent', agent: 'claude', project: repo, name: 'Replier' });
+    const replyProj = path.join(tmp, 'reply-proj'); // its own project: the messaging tests above used up repo's message limit
+    fs.mkdirSync(replyProj);
+    const r = await ok('POST', '/api/sessions', { kind: 'agent', agent: 'claude', project: replyProj, name: 'Replier' });
     await screenOf(r.id, /FAKE-CLAUDE/, 'it has started');
     const s = sessions.get(r.id);
     const typed = [];
@@ -1753,6 +1755,22 @@ esac
     s.exited = false;
     const source = fs.readFileSync(new URL('./public/js/agents.js', import.meta.url), 'utf8');
     assert.match(source.slice(source.indexOf('function dispose(')).split('\n}')[0], /\.reply-pop\[data-pane=.*close\(\)/, "closing a pane closes its open reply box");
+    // Ask aside: Claude Code's /btw typed as keys, then the quote and question as one paste, then Enter. Only you, only Claude.
+    assert.equal((await request('POST', `/api/sessions/${r.id}/input`, { body: { text: '> a\n> b\n\nwhy?', paste: true, aside: true } })).status, 200);
+    await s.inbox;
+    assert.deepEqual(typed.splice(0), ['/btw ', '\x1b[200~> a\n> b\n\nwhy?\x1b[201~', '\r'], 'ask aside: "/btw " as keys, the rest pasted, then Enter');
+    const peer = await ok('POST', '/api/sessions', { kind: 'agent', agent: 'claude', project: replyProj, name: 'Peer' });
+    const fromPeer = body => request('POST', `/api/sessions/${r.id}/input`, { headers: { 'x-desk-session': peer.id, 'x-desk-via': 'mcp' }, body });
+    for (const body of [{ text: '/btw why?' }, { text: 'why?', paste: true, aside: true }]) assert.equal((await fromPeer(body)).status, 200);
+    await s.inbox;
+    assert.deepEqual(typed.map(t => t.replace('\x1b[200~', '').slice(0, 14)), ['[Message from ', '\r', '[Message from ', '\r'],
+      "an agent's /btw is signed first, so it's no command, and its aside flag is ignored");
+    typed.length = 0;
+    await ok('DELETE', `/api/sessions/${peer.id}`);
+    s.agent = 'codex';
+    assert.equal((await request('POST', `/api/sessions/${r.id}/input`, { body: { text: 'why?', paste: true, aside: true } })).status, 400, 'ask aside is for Claude Code only');
+    s.agent = 'claude';
+    assert.match(source, /const asideBtn = p\.session\.agent === 'claude' && h\('button'/, 'the Ask aside button shows in Claude panes only');
     await mode(false);
     s.pty.write = write;
     await ok('DELETE', `/api/sessions/${r.id}`);

@@ -356,7 +356,8 @@ route('GET', '/api/sessions/:id/output', ({ req, params, query }) =>
 // agent in its own project, never a shell or a permission prompt.
 route('POST', '/api/sessions/:id/input', async ({ req, params, body }) => {
   const text = String(body.text ?? '');
-  if (!fromAgent(req)) return ((body.paste ? S.paste : S.send)(findSession(params.id), text, body.submit !== false), {});
+  // Only you can Ask aside (/btw): from an agent, the flag is ignored and deliver refuses a leading /.
+  if (!fromAgent(req)) return (body.paste ? S.paste(findSession(params.id), text, { aside: body.aside === true }) : S.send(findSession(params.id), text, body.submit !== false), {});
   mayMessage(req);
   const from = caller(req);
   const closed = from && !S.sessions.has(params.id) && closedWorker(from.project, params.id);

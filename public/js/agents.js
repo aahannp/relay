@@ -596,13 +596,15 @@ function replyToSelection(p, host) {
     const at = endCell() ?? (r => ({ left: r.left + 24, bottom: r.top + r.height / 3 }))(host.getBoundingClientRect());
     const input = h('textarea', { class: 'input', rows: 2, placeholder: 'Ask about this…', 'aria-label': 'Your question about the selected text' });
     const err = h('div', { class: 'reply-err', role: 'alert' });
-    const sendBtn = h('button', { class: 'btn xs primary', onClick: () => send() }, icon('send', 12), 'Send');
+    const sendBtn = h('button', { class: 'btn xs primary', title: 'Reply (Enter)', onClick: () => send() }, icon('send', 12), 'Send');
+    // Claude Code's /btw: answered in an overlay in its pane, from the conversation, without joining it.
+    const asideBtn = p.session.agent === 'claude' && h('button', { class: 'btn xs reply-aside', title: "Ask without adding to the agent's conversation (⌘Enter)", onClick: () => send(true) }, 'Ask aside');
     const pop = h('div', { class: 'reply-pop', 'data-pane': p.id, role: 'dialog', 'aria-label': `Reply to ${chatTitle(p.session)} about the selected text` },
       h('div', { class: 'reply-quote', tabindex: 0, 'aria-label': 'Selected text' }, sel.replace(/\s+$/, '')),
       input, err,
       h('div', { class: 'reply-row' },
-        h('span', { class: 'reply-hint' }, 'Enter to send · Shift+Enter for a new line'),
-        h('button', { class: 'btn xs', onClick: () => close() }, 'Cancel'), sendBtn));
+        h('span', { class: 'reply-hint' }, asideBtn ? '⏎ send · ⌘⏎ ask aside · ⇧⏎ new line' : 'Enter to send · Shift+Enter for a new line'),
+        h('button', { class: 'btn xs', onClick: () => close() }, 'Cancel'), asideBtn, sendBtn));
     const outside = e => !pop.contains(e.target) && close(false);
     function close(refocus = true) {
       pop.remove();
@@ -610,23 +612,26 @@ function replyToSelection(p, host) {
       if (refocus) term.focus();
     }
     pop.close = () => close(false);
-    async function send() {
+    async function send(aside = false) {
       if (!input.value.trim()) return input.focus();
+      if (!asideBtn) aside = false;
       sendBtn.disabled = true;
+      if (asideBtn) asideBtn.disabled = true;
       err.textContent = '';
       try {
-        await api('POST', `/api/sessions/${p.id}/input`, { text: quoteReply(sel, input.value), paste: true });
+        await api('POST', `/api/sessions/${p.id}/input`, { text: quoteReply(sel, input.value), paste: true, aside });
         term.clearSelection();
         close();
       } catch (e) {
         err.textContent = e.message; // what you typed stays, to send once you've answered the prompt
         sendBtn.disabled = false;
+        if (asideBtn) asideBtn.disabled = false;
         input.focus();
       }
     }
     pop.addEventListener('keydown', e => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
-      else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target === input) { e.preventDefault(); send(); }
+      else if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.isComposing && e.target === input) { e.preventDefault(); send(e.metaKey); }
     });
     document.body.append(pop);
     pop.style.left = `${Math.max(8, Math.min(at.left - 24, innerWidth - pop.offsetWidth - 8))}px`;
