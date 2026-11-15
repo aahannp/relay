@@ -1125,18 +1125,31 @@ esac
     await new Promise(r => setTimeout(r, 300));
     assert.equal(steps.at(-1).step, 'writing', "written, but the turn isn't over: it waits");
     await request('POST', '/api/turn-ended', { token: sessions.get(lead.id).agentToken, body: {} });
+    await new Promise(r => setTimeout(r, 300));
+    assert.equal(steps.at(-1).step, 'writing', 'the turn is over but it is not idle at an empty prompt (a report may be running): it waits');
+    const ls = sessions.get(lead.id);
+    await new Promise(resolve => ls.term.write(`\x1b[3J\x1b[2J\x1b[H\r\n${'─'.repeat(60)}\r\n❯\r\n${'─'.repeat(60)}\r\n`, () => { ls.lastOutputAt = Date.now() - 25_000; resolve(); }));
+    ls.queued = 1; // a message still waiting to be typed in
+    await new Promise(r => setTimeout(r, 300));
+    assert.equal(steps.at(-1).step, 'writing', 'idle at a prompt, but a message is queued for it: it waits');
+    ls.queued = 0;
+    const starting = await stepped('starting');
+    assert.ok(starting, 'idle at an empty prompt with nothing queued: a new lead starts');
+    const late = (await request('POST', '/api/sessions', { headers: { 'x-desk-session': lead.id }, body: { kind: 'agent', agent: 'claude', project: repo, name: 'Late worker' } })).body;
     const done = await stepped('done');
-    assert.ok(done && steps.some(e => e.step === 'starting'), 'the turn ends: a new lead starts');
+    assert.ok(done, 'and takes over');
     assert.ok(!sessions.has(lead.id), 'the old lead is stopped');
     const fresh = sessions.get(done.freshId);
     assert.deepEqual([fresh.name, fresh.role, fresh.model, fresh.effort], ['Hand Lead', 'lead', lead.model, lead.effort], 'same name, model and effort');
     await screenOf(fresh.id, new RegExp(`taking over as lead from Hand Lead.*Read the handoff first: ${file.replace(/[.]/g, '\\.')}`), 'its prompt points at the doc');
     assert.equal(sessions.get(worker.id).startedBy.id, fresh.id, 'its workers now report to the new lead');
+    assert.equal(sessions.get(late.id).startedBy.id, fresh.id, 'one it started while the new lead was settling too');
+    assert.match(fs.readFileSync(new URL('./public/js/app.js', import.meta.url), 'utf8'), /'handoff', 'lead-upkeep'\]\.includes\(event\.type\)/, 'the page passes on handoff and lead upkeep events, for their toasts');
     await screenOf(peer.id, new RegExp(`Hand Lead handed off: a fresh Hand Lead \\(agent ${fresh.id}\\)`), 'the other lead is told');
     assert.equal(db.chats.find(c => c.id === lead.chatId)?.replacedBy, fresh.chatId, "the old chat stays, marked replaced");
     bus.off('event', onStep);
     fs.rmSync(skill, { recursive: true, force: true });
-    for (const id of [fresh.id, peer.id, plainAgent.id, shell.id, worker.id]) await ok('DELETE', `/api/sessions/${id}`);
+    for (const id of [fresh.id, peer.id, plainAgent.id, shell.id, worker.id, late.id]) await ok('DELETE', `/api/sessions/${id}`);
   }
 
   // ---- context: T1 — a compaction window per kind of agent, and who it is again after a compaction
