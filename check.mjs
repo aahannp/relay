@@ -11,7 +11,7 @@ import { start, processTree } from './server.mjs';
 import { createWorktree } from './lib/git.mjs';
 import { db, bus, migrate, DEFAULTS as STORE_DEFAULTS } from './lib/store.mjs';
 import * as T from './lib/team.mjs';
-import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose, deliver, noteLimits, usageLimits } from './lib/sessions.mjs';
+import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose, deliver, noteLimits, usageLimits, HANDOFF, macBlocked, warnIfBlocked } from './lib/sessions.mjs';
 import { THEMES } from './public/js/themes.js';
 import { transcriptContext } from './lib/transcripts.mjs';
 import { priceReply } from './lib/usage.mjs';
@@ -35,7 +35,7 @@ process.env.CLAUDE_CONFIG_DIR = path.join(tmp, 'claude-home'); // and never your
 fs.writeFileSync(path.join(tmp, 'data', 'token'), ''); // an empty secret file must never mean "no secret"
 fs.mkdirSync(path.join(tmp, 'data', 'mcp'));
 fs.writeFileSync(path.join(tmp, 'data', 'mcp', 'gone1234.json'), 'left by a crash');
-fs.writeFileSync(path.join(tmp, 'data', 'desk.json'), JSON.stringify({ settings: { agentDefaults: { claude: { model: '', effort: '' }, lead: { model: 'opus', effort: 'high' } } } }));
+fs.writeFileSync(path.join(tmp, 'data', 'desk.json'), JSON.stringify({ projects: [], tasks: [], settings: { agentDefaults: { claude: { model: '', effort: '' }, lead: { model: 'opus', effort: 'high' } } } }));
 let desk = await start({ port: 0, dataDir: path.join(tmp, 'data') });
 assert.deepEqual(db.settings.agentDefaults, { claude: { model: 'sonnet', effort: '', compactWindow: 300_000 }, lead: { model: 'opus', effort: 'high', compactWindow: 400_000 } }, "an old install's workers move to Sonnet; leads stay on Opus");
 // Old settings: asking between folders turned off stays off under its new name
@@ -48,6 +48,45 @@ assert.deepEqual(migrated({ mixFolders: false, openSpaces: [] }, [spA, spB]).ope
 assert.ok(!('mixFolders' in migrated({ mixFolders: true }, [spA])), 'the old switch is gone');
 assert.deepEqual(migrated({ openSpaces: ['/x/a', '/gone', '/x/a', '/x/b'] }, [spA, spB]).openSpaces, ['/x/a', '/x/b'], 'removed folders and repeats drop out');
 assert.ok(desk.token.length >= 32, 'an empty token file is replaced with a real secret');
+// desk.json that can't be read: Relay falls back to desk.json.bak, else starts empty, and keeps the bad file aside.
+// In a child process, so the running server's store (and its file) stay untouched.
+{
+  const storeDir = path.join(tmp, 'store');
+  fs.mkdirSync(storeDir);
+  const deskFile = path.join(storeDir, 'desk.json');
+  const run = code => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
+    `import * as S from ${JSON.stringify(new URL('./lib/store.mjs', import.meta.url).href)}; S.load(${JSON.stringify(storeDir)}); ${code}`], { stdio: ['ignore', 'pipe', 'pipe'] }).toString());
+  const saved = { settings: { theme: 'saved' }, projects: [], tasks: [{ id: 't1' }] };
+  fs.writeFileSync(deskFile, JSON.stringify(saved));
+  run(`S.db.settings.theme = 'changed'; S.changed('settings'); console.log('{}')`);
+  assert.deepEqual([JSON.parse(fs.readFileSync(`${deskFile}.bak`, 'utf8')).settings.theme, JSON.parse(fs.readFileSync(deskFile, 'utf8')).settings.theme], ['saved', 'changed'], 'a save keeps the previous version as desk.json.bak');
+  fs.writeFileSync(deskFile, '{"settings": {"theme": "cha'); // cut short
+  assert.deepEqual(run(`console.log(JSON.stringify([S.db.settings.theme, S.db.tasks]))`), ['saved', saved.tasks], 'a corrupt desk.json loads desk.json.bak');
+  const asideFiles = () => fs.readdirSync(storeDir).filter(f => f.startsWith('desk.json.corrupt-'));
+  assert.equal(asideFiles().length, 1, 'and keeps the corrupt file aside');
+  fs.writeFileSync(deskFile, 'nope');
+  fs.writeFileSync(`${deskFile}.bak`, '{,');
+  assert.deepEqual(run(`console.log(JSON.stringify([S.db.settings.theme, S.db.tasks]))`), [STORE_DEFAULTS.settings.theme, []], 'both corrupt: Relay starts empty instead of failing to start');
+  assert.deepEqual([asideFiles().length, fs.existsSync(deskFile)], [2, false], 'and keeps the corrupt copy, out of the way of the next save');
+  // JSON of the wrong shape is corrupt too: it would load as an empty Relay, and the next save would make it the .bak
+  fs.writeFileSync(`${deskFile}.bak`, JSON.stringify(saved));
+  for (const bad of ['[]', '{}', '{"settings": {}}', '{"projects": [], "tasks": {}}']) {
+    fs.writeFileSync(deskFile, bad);
+    assert.deepEqual(run(`console.log(JSON.stringify(S.db.tasks))`), saved.tasks, `${bad} is corrupt: desk.json.bak loads`);
+  }
+  // A file Relay may not read isn't corrupt: it stays where it is, and Relay stops as before
+  const fails = () => assert.throws(() => run('console.log(1)'), /EACCES|EISDIR/);
+  fs.writeFileSync(deskFile, JSON.stringify(saved));
+  fs.chmodSync(deskFile, 0);
+  const before = asideFiles().length;
+  fails();
+  fs.chmodSync(deskFile, 0o600);
+  assert.deepEqual([asideFiles().length, JSON.parse(fs.readFileSync(deskFile, 'utf8')).tasks], [before, saved.tasks], 'an unreadable desk.json is left alone');
+  fs.rmSync(deskFile);
+  fs.mkdirSync(deskFile);
+  fails();
+  assert.deepEqual([asideFiles().length, fs.statSync(deskFile).isDirectory()], [before, true], 'so is a folder in its place');
+}
 assert.ok(!fs.existsSync(path.join(tmp, 'data', 'mcp', 'gone1234.json')), "a session's MCP file never outlives a restart");
 let SELF = `http://127.0.0.1:${desk.port}`;
 const EVIL = 'https://evil.example';
@@ -317,6 +356,7 @@ try {
   assert.equal(settingsOf(command({ ...base, resume: false }, '', null).args).autoCompactWindow, undefined, 'or your settings.json does');
   assert.match(hooks.PostToolUse[0].hooks[0].command, /\/api\/touched/, 'every file an agent edits is reported');
   assert.match(hooks.Stop[0].hooks[0].command, /\/api\/turn-ended/, 'and the end of each turn');
+  assert.deepEqual([hooks.Notification[0].matcher, /\/api\/needs-you/.test(hooks.Notification[0].hooks[0].command)], ['permission_prompt', true], 'and each permission prompt');
   assert.deepEqual(settingsOf(fresh).attribution, { commit: 'Generated via Relay', pr: 'Generated via Relay' }, 'commits and PRs say Relay made them');
   process.env.CLAUDE_CODE_CHILD_SESSION = '1';
   assert.ok(!('CLAUDE_CODE_CHILD_SESSION' in command({ ...base, resume: false }, '', null).env), "an agent never inherits Claude Code's child-session flag, which turns transcript saving off");
@@ -479,7 +519,7 @@ try {
   assert.ok(!(await ok('GET', '/api/sessions')).some(x => x.chatId === first.chatId), 'removing a chat also closes its finished pane');
 
   // The team: named specialists with their own instructions and model, who know about each other
-  assert.deepEqual((await ok('GET', '/api/specialists')).map(x => [x.name, x.model, x.effort]), [['Christie', 'sonnet', 'medium'], ['Browner', 'opus', 'high'], ['Scout', 'haiku', 'low'], ['Archie', 'opus', 'high'], ['Vera', 'opus', 'high'], ['Sherlock', 'opus', 'high'], ['Tess', 'sonnet', 'medium']], 'seven built-in specialists, each with a usual model and effort');
+  assert.deepEqual((await ok('GET', '/api/specialists')).map(x => [x.name, x.model, x.effort]), [['Christie', 'sonnet', 'medium'], ['Browner', 'opus', 'high'], ['Scout', 'haiku', 'low'], ['Archie', 'opus', 'high'], ['Vera', 'opus', 'high'], ['Sherlock', 'opus', 'high'], ['Tess', 'sonnet', 'medium'], ['Cassie', 'fable', 'high'], ['Nova', 'fable', 'high']], 'nine built-in specialists, each with a usual model and effort');
   const scout = await ok('POST', '/api/sessions', { specialist: 'scout', project: repo, prompt: 'where is the README?' });
   assert.deepEqual([scout.name, scout.agent, scout.model, scout.specialist.name, scout.asked], ['Scout', 'claude', 'haiku', 'Scout', 'where is the README?'], 'a specialist is Claude with their own model');
   await exited(scout.id);
@@ -570,8 +610,8 @@ try {
   await exited(startedTask.agent);
   await ok('DELETE', `/api/tasks/${made.id}`);
   const teamNow = JSON.parse((await viaTool('list_team', {})).content[0].text);
-  assert.deepEqual(teamNow.map(x => [x.name, x.model]), [['Christie', 'sonnet'], ['Browner', 'opus'], ['Scout', 'haiku'], ['Archie', 'opus'], ['Vera', 'opus'], ['Sherlock', 'opus'], ['Tess', 'sonnet'], ['Rhea', 'sonnet']], 'agents see the whole team');
-  assert.deepEqual([teamNow[7].id, teamNow[7].instructions], [rhea.id, 'Review carefully.'], 'with each full profile');
+  assert.deepEqual(teamNow.map(x => [x.name, x.model]), [['Christie', 'sonnet'], ['Browner', 'opus'], ['Scout', 'haiku'], ['Archie', 'opus'], ['Vera', 'opus'], ['Sherlock', 'opus'], ['Tess', 'sonnet'], ['Cassie', 'fable'], ['Nova', 'fable'], ['Rhea', 'sonnet']], 'agents see the whole team');
+  assert.deepEqual([teamNow[9].id, teamNow[9].instructions], [rhea.id, 'Review carefully.'], 'with each full profile');
   const edited = await viaTool('update_specialist', { specialist: 'rhea', instructions: 'Review briefly.' });
   assert.ok(!edited.isError, 'an agent can edit a specialist when asked');
   assert.deepEqual((await ok('GET', '/api/specialists')).find(x => x.id === rhea.id).instructions, 'Review briefly.', 'and the change sticks');
@@ -612,14 +652,14 @@ try {
   await ok('PATCH', '/api/settings', { agentsCanSpawn: true });
   assert.equal((await ok('PATCH', `/api/specialists/${rhea.id}`, { readOnly: true })).readOnly, true, 'any specialist can be made read-only');
   await ok('DELETE', `/api/specialists/${rhea.id}`);
-  assert.equal((await ok('GET', '/api/specialists')).length, 7);
+  assert.equal((await ok('GET', '/api/specialists')).length, 9);
 
   // A team saved by an older Relay gets the built-ins added since, but not one you removed, and keeps your edits
   {
     const saved = [db.specialists, db.removedSpecialists];
     db.specialists = [{ ...db.specialists[0], role: 'Learning coach: mine now' }, db.specialists[2], { id: 'own1', name: 'Mine', role: 'Custom', model: '', effort: '', instructions: '' }];
     db.removedSpecialists = ['browner'];
-    assert.deepEqual((await ok('GET', '/api/specialists')).map(x => x.name), ['Christie', 'Scout', 'Mine', 'Archie', 'Vera', 'Sherlock', 'Tess'], 'new built-ins appear after your own team');
+    assert.deepEqual((await ok('GET', '/api/specialists')).map(x => x.name), ['Christie', 'Scout', 'Mine', 'Archie', 'Vera', 'Sherlock', 'Tess', 'Cassie', 'Nova'], 'new built-ins appear after your own team');
     assert.equal(T.find('christie').role, 'Learning coach: mine now', 'your edit to a built-in stays');
     await ok('DELETE', '/api/specialists/vera');
     await ok('PATCH', '/api/specialists/own1', { name: 'Mine too' });
@@ -1053,12 +1093,15 @@ esac
     fs.rmSync(path.join(claudeHome, 'settings.json'));
     s.compactWindow = 200_000; // as if it had started with the lead's window at 200K
     assert.equal(effectiveWindow(s), 200_000, "with the lead's window at 200K, 150K is 75%");
-    for (const [why, ...screen] of [['working a moment ago', '', undefined, 5000], ['you are typing', '', ' hello'], ['a spinner is up', '✶ Tempering…'],
-      ['a permission prompt is up', 'Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No\r\n']]) {
+    for (const [why, ...screen] of [['working a moment ago', '', undefined, 5000], ['you are typing', '', ' hello'], ['a spinner is up', '✶ Tempering…']]) {
       await paint(...screen);
       await upkeep();
       assert.ok(!(await compacted()), `over the threshold but ${why}: nothing`);
     }
+    // A permission prompt: Claude Code draws its menu in place of the input box
+    await new Promise(res => s.term.write('\x1b[3J\x1b[2J\x1b[HDo you want to proceed?\r\n ❯ 1. Yes\r\n   2. No\r\n', () => res(s.lastOutputAt = Date.now() - 25_000)));
+    await upkeep();
+    assert.ok(!(await compacted()), 'over the threshold but a permission prompt is up: nothing');
     s.term.write('\x1b[3J\x1b[2J\x1b[H', () => (s.lastOutputAt = Date.now() - 25_000));
     await upkeep();
     assert.ok(!(await compacted()), "a screen it can't read: nothing");
@@ -1088,6 +1131,68 @@ esac
     await ok('PATCH', '/api/settings', { leadUpkeep: { ...UP, on: false } });
     for (const id of [fresh.id, other.id, worker.id]) await ok('DELETE', `/api/sessions/${id}`);
     db.tasks.splice(db.tasks.indexOf(db.tasks.find(t => t.id === task.id)), 1);
+  }
+
+  // Hand off: you ask a Claude lead for a handoff doc (your /handoff skill, else a built-in prompt); once it's written
+  // and the turn is over, a fresh lead takes over from it the way lead upkeep's does. A timeout changes nothing.
+  {
+    const lead = await ok('POST', '/api/sessions', { kind: 'agent', agent: 'claude', project: repo, role: 'lead', name: 'Hand Lead', prompt: 'Build it' });
+    const peer = await ok('POST', '/api/sessions', { kind: 'agent', agent: 'claude', project: repo, role: 'lead', name: 'hand peer' });
+    const plainAgent = await ok('POST', '/api/sessions', { kind: 'agent', agent: 'claude', project: repo, name: 'hand plain' });
+    const shell = await ok('POST', '/api/sessions', { kind: 'shell', project: repo });
+    const worker = (await request('POST', '/api/sessions', { headers: { 'x-desk-session': lead.id }, body: { kind: 'agent', agent: 'claude', project: repo, name: 'Hand worker' } })).body;
+    for (const id of [lead.id, peer.id, plainAgent.id, worker.id]) await screenOf(id, /FAKE-CLAUDE/, 'started');
+    const handoff = id => request('POST', `/api/sessions/${id}/handoff`);
+    for (const x of [plainAgent, shell]) assert.equal((await handoff(x.id)).status, 400, 'only a Claude lead hands off');
+    assert.equal((await request('POST', `/api/sessions/${lead.id}/handoff`, { headers: { 'x-desk-via': 'mcp' } })).status, 403, 'an agent cannot');
+    const steps = [];
+    const onStep = e => e.type === 'handoff' && e.id === lead.id && steps.push(e);
+    bus.on('event', onStep);
+    const stepped = async step => { for (let i = 0; i < 100 && !steps.some(e => e.step === step); i++) await new Promise(r => setTimeout(r, 50)); return steps.find(e => e.step === step); };
+    const skill = path.join(claudeHome, 'skills', 'handoff');
+    fs.rmSync(skill, { recursive: true, force: true });
+    Object.assign(HANDOFF, { wait: 1000, poll: 50 });
+    const { file } = (await handoff(lead.id)).body;
+    assert.match(file, new RegExp(`^${repo}/\\.agent-desk/handoffs/\\d{4}-\\d\\d-\\d\\d-\\d{4}-hand-lead\\.md$`), 'its doc goes in the project, stamped and named');
+    await screenOf(lead.id, /Write a handoff doc so a fresh lead.*## Next steps/, 'no skill: the built-in prompt is typed');
+    assert.equal((await stepped('failed'))?.error, 'No handoff from Hand Lead after 10 minutes; it keeps running', 'nothing written: it times out');
+    assert.ok(sessions.has(lead.id) && !sessions.get(lead.id).exited && sessions.get(worker.id).startedBy.id === lead.id, 'and nothing changed');
+    steps.length = 0;
+    fs.mkdirSync(skill, { recursive: true });
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: handoff\n---\n');
+    HANDOFF.wait = 30_000;
+    assert.equal((await handoff(lead.id)).status, 200);
+    assert.equal((await handoff(lead.id)).status, 409, 'one at a time');
+    await screenOf(lead.id, new RegExp(`/handoff write it to ${file.replace(/[.]/g, '\\.')}`), 'with your skill: /handoff and the path');
+    fs.writeFileSync(file, '# Handoff: build it\n## Next steps\n1. Ship\n');
+    await new Promise(r => setTimeout(r, 300));
+    assert.equal(steps.at(-1).step, 'writing', "written, but the turn isn't over: it waits");
+    await request('POST', '/api/turn-ended', { token: sessions.get(lead.id).agentToken, body: {} });
+    await new Promise(r => setTimeout(r, 300));
+    assert.equal(steps.at(-1).step, 'writing', 'the turn is over but it is not idle at an empty prompt (a report may be running): it waits');
+    const ls = sessions.get(lead.id);
+    await new Promise(resolve => ls.term.write(`\x1b[3J\x1b[2J\x1b[H\r\n${'─'.repeat(60)}\r\n❯\r\n${'─'.repeat(60)}\r\n`, () => { ls.lastOutputAt = Date.now() - 25_000; resolve(); }));
+    ls.queued = 1; // a message still waiting to be typed in
+    await new Promise(r => setTimeout(r, 300));
+    assert.equal(steps.at(-1).step, 'writing', 'idle at a prompt, but a message is queued for it: it waits');
+    ls.queued = 0;
+    const starting = await stepped('starting');
+    assert.ok(starting, 'idle at an empty prompt with nothing queued: a new lead starts');
+    const late = (await request('POST', '/api/sessions', { headers: { 'x-desk-session': lead.id }, body: { kind: 'agent', agent: 'claude', project: repo, name: 'Late worker' } })).body;
+    const done = await stepped('done');
+    assert.ok(done, 'and takes over');
+    assert.ok(!sessions.has(lead.id), 'the old lead is stopped');
+    const fresh = sessions.get(done.freshId);
+    assert.deepEqual([fresh.name, fresh.role, fresh.model, fresh.effort], ['Hand Lead', 'lead', lead.model, lead.effort], 'same name, model and effort');
+    await screenOf(fresh.id, new RegExp(`taking over as lead from Hand Lead.*Read the handoff first: ${file.replace(/[.]/g, '\\.')}`), 'its prompt points at the doc');
+    assert.equal(sessions.get(worker.id).startedBy.id, fresh.id, 'its workers now report to the new lead');
+    assert.equal(sessions.get(late.id).startedBy.id, fresh.id, 'one it started while the new lead was settling too');
+    assert.match(fs.readFileSync(new URL('./public/js/app.js', import.meta.url), 'utf8'), /'handoff', 'lead-upkeep'[^\]]*\]\.includes\(event\.type\)/, 'the page passes on handoff and lead upkeep events, for their toasts');
+    await screenOf(peer.id, new RegExp(`Hand Lead handed off: a fresh Hand Lead \\(agent ${fresh.id}\\)`), 'the other lead is told');
+    assert.equal(db.chats.find(c => c.id === lead.chatId)?.replacedBy, fresh.chatId, "the old chat stays, marked replaced");
+    bus.off('event', onStep);
+    fs.rmSync(skill, { recursive: true, force: true });
+    for (const id of [fresh.id, peer.id, plainAgent.id, shell.id, worker.id, late.id]) await ok('DELETE', `/api/sessions/${id}`);
   }
 
   // ---- context: T1 — a compaction window per kind of agent, and who it is again after a compaction
@@ -1383,6 +1488,14 @@ esac
     assert.match(await outputOf(boss.id), /\[Report from Once only [^\]]*\] Once only is done/, 'a turn that moved its task to review still sends its report: the move only announced it');
     assert.ok(!sessions.has(scouty.id) && !sessions.has(tasked.id), 'then the worker closes, freeing its slot');
     assert.ok(sessions.has(kept.id), 'but not one you typed in');
+    const held = await worker('Held');
+    await screenOf(held.id, /FAKE-CLAUDE/, 'started');
+    sessions.get(boss.id).attention = true; // its starter waits at a prompt, so the report can't go in
+    assert.equal((await ended(held, 'Held is done')).status, 200);
+    await new Promise(r => setTimeout(r, 1500));
+    assert.ok(sessions.has(held.id), 'a worker whose report a prompt held up stays open');
+    const bossNews = (await request('POST', '/api/news', { token: sessions.get(boss.id).agentToken })).body?.hookSpecificOutput?.additionalContext ?? '';
+    assert.match(bossNews, new RegExp(`Held's report didn't reach Boss three: a prompt was up\\. Held stays open; read_agent_chat ${held.id}`), 'and its starter hears so');
     const chat = (await ok('GET', '/api/chats')).find(c => c.id === scouty.chatId);
     assert.deepEqual([chat.running, chat.autoClosed], [false, scouty.id], 'its chat stays');
     assert.doesNotMatch((await rpc('tools/call', { name: 'get_agent_diff', arguments: { id: scouty.id } }, asBoss)).result.content[0].text, /No such session/, 'get_agent_diff still finds it by its old id');
@@ -1393,7 +1506,7 @@ esac
     const again = [...sessions.values()].find(s => s.chatId === tasked.chatId);
     await screenOf(again.id, /One more thing/, 'and gets the message');
     assert.equal(db.tasks.find(t => t.id === job.id).sessionId, again.id, 'its task follows it');
-    for (const id of [boss.id, kept.id, woke.to.id, again.id]) await ok('DELETE', `/api/sessions/${id}`);
+    for (const id of [boss.id, kept.id, held.id, woke.to.id, again.id]) await ok('DELETE', `/api/sessions/${id}`);
     db.tasks.splice(db.tasks.indexOf(db.tasks.find(t => t.id === job.id)), 1);
   }
 
@@ -1420,7 +1533,8 @@ esac
     fs.writeFileSync(transcript, [line({ type: 'user', message: { content: 'Go' } }), line({ type: 'assistant', message: { content: [{ type: 'text', text: older }] } }),
       line({ type: 'user', message: { content: 'And?' } }), line({ type: 'assistant', message: { content: [{ type: 'text', text: final }] } })].join('\n'));
     const closes = async id => {
-      sessions.get(boss.id).attention = false; // the fake boss goes quiet and looks like it waits for the user, which holds reports
+      // The fake boss's tty rings its bell when a long report overflows its input line, which looks like a prompt and holds reports
+      Object.defineProperty(sessions.get(boss.id), 'attention', { get: () => false, set() {}, configurable: true });
       assert.equal((await request('POST', '/api/turn-ended', { token: sessions.get(id).agentToken, body: { hook_event_name: 'Stop', last_assistant_message: final } })).status, 200);
       for (let i = 0; i < 60 && sessions.has(id); i++) await new Promise(r => setTimeout(r, 50));
       assert.ok(!sessions.has(id), 'the worker closes after its turn');
@@ -1676,7 +1790,7 @@ esac
   await ok('DELETE', `/api/sessions/${careful.id}`);
   await ok('PATCH', '/api/settings', { agentsAutonomous: true });
 
-  await ok('POST', `/api/sessions/${christieId}/input`, { text: 'Do you want to proceed?  1. Yes  2. No' }); // you can type anything
+  await ok('POST', `/api/sessions/${christieId}/input`, { text: 'Do you want to proceed?  ❯ 1. Yes  2. No' }); // you can type anything
   await screenOf(christieId, /2\. No/, 'a prompt on screen');
   const blocked = await say('Christie', 'Press enter for me');
   assert.equal(blocked.status, 409, 'nothing is typed into a permission prompt');
@@ -1774,7 +1888,7 @@ esac
     await new Promise(res => setTimeout(res, 300));
     assert.deepEqual(typed.splice(0), ['as\x01typed\n', '\r'], 'without the flag, what you type goes as it is');
     // A prompt that shows up while a message waits its turn: the waiting one is dropped, not typed (its Enter would answer it)
-    const showPrompt = () => new Promise(res => s.term.write('\r\n 1. Yes\r\n 2. No\r\n', res));
+    const showPrompt = () => new Promise(res => s.term.write('\r\n ❯ 1. Yes\r\n   2. No\r\n', res));
     const hidePrompt = () => new Promise(res => s.term.write('moved on\r\n'.repeat(30), res)); // it scrolls away
     for (const [how, send] of [['a reply', text => paste(text)], ['a message from an agent', async text => deliver(s, text)]]) {
       let release;
@@ -1813,6 +1927,47 @@ esac
     assert.deepEqual(typed.map(t => t.replace('\x1b[200~', '').slice(0, 14)), ['[Message from ', '\r', '[Message from ', '\r'],
       "an agent's /btw is signed first, so it's no command, and its aside flag is ignored");
     typed.length = 0;
+    // A prompt drawn between the paste and its Enter: no Enter (it would answer the prompt), and the sender hears so
+    s.pty.write = d => { typed.push(d); write(d); if (d.includes('late prompt')) showPrompt(); };
+    const late = await paste('late prompt');
+    assert.deepEqual([late.status, typed.splice(0)], [409, ['\x1b[200~late prompt\x1b[201~']], 'a reply: pasted, then no Enter once a prompt appears');
+    assert.match(late.body.error, /in its input box and goes out with the next Enter\. Don't send it again/, 'and you hear it is in the input box');
+    await hidePrompt();
+    const lateMsg = await fromPeer({ text: 'late prompt' });
+    assert.equal(typed.splice(0).length, 1, "an agent's message: pasted, then no Enter");
+    assert.deepEqual([lateMsg.status, lateMsg.body.error], [409, "A prompt appeared in Replier's pane before the Enter, so the message wasn't sent. It's in their input box and goes out with the next Enter: don't send it again."], 'and its sender is told it is in the input box, not to send it again (a retry would send it twice)');
+    await hidePrompt();
+    // Claude Code's screen: messages, then the input box, where what you paste goes. Its permission menu takes the box's place.
+    const box = text => `${'─'.repeat(60)}\r\n❯ ${text.replace(/\n/g, '\r\n  ')}\r\n${'─'.repeat(60)}\r\n  ⏵⏵ auto mode on\r\n`;
+    const draw = text => new Promise(res => s.term.write(`\x1b[3J\x1b[2J\x1b[H${text}`, res));
+    const menu = 'Do you want to proceed?\r\n ❯ 1. Yes\r\n   2. No\r\n\r\n Esc to cancel\r\n';
+    const inBox = d => d.startsWith('\x1b[200~') && draw(`● Done.\r\n\r\n${box(d.slice(6, -6))}`);
+    await draw(`● Pick one:\r\n ❯ 1. Yes\r\n   2. No\r\n\r\n${box('')}`);
+    s.pty.write = d => { typed.push(d); inBox(d); };
+    assert.equal((await fromPeer({ text: 'hi' })).status, 200, "the option lines in an agent's own message, above its input box, are no prompt");
+    assert.equal(typed.splice(0).at(-1), '\r', 'so the message is sent');
+    assert.equal((await fromPeer({ text: 'Which?\n❯ 1. Yes\n2. No' })).status, 200, 'a message with the option lines in it is typed');
+    assert.equal(typed.splice(0).at(-1), '\r', 'and sent: the lines it pasted into the input box are no prompt');
+    assert.equal((await paste('Which?\n❯ 1. Yes\n2. No')).status, 200, 'a reply with them too');
+    assert.equal(typed.splice(0).at(-1), '\r');
+    s.pty.write = d => { typed.push(d); inBox(d) && draw(`● Done.\r\n\r\n${menu}`); };
+    assert.equal((await fromPeer({ text: 'Which?\n❯ 1. Yes\n2. No' })).status, 409, 'a real menu drawn between the paste and the Enter still stops the Enter');
+    assert.equal(typed.splice(0).length, 1, 'only the paste went');
+    assert.equal((await fromPeer({ text: 'hi' })).status, 409, 'and the menu on screen stops the next message');
+    assert.deepEqual(typed, []);
+    s.pty.write = d => { typed.push(d); inBox(d); };
+    await draw(`● Done.\r\n\r\n${box('')}`);
+    assert.equal((await request('POST', '/api/needs-you', { token: s.agentToken })).status, 200);
+    assert.equal((await fromPeer({ text: 'hi' })).status, 409, "Claude Code's permission notification (its hook) holds messages too, whatever the screen shows");
+    assert.deepEqual(typed, []);
+    // A notification that lands after the prompt was answered doesn't hold the pane for good: its next turn activity clears it
+    for (const hook of ['/api/turn-ended', '/api/news']) {
+      s.attention = true;
+      assert.equal((await request('POST', hook, { token: s.agentToken, body: {} })).status, 200);
+      assert.equal(s.attention, false, `${hook} (no prompt can be up then) clears "needs you"`);
+    }
+    assert.equal((await fromPeer({ text: 'hi' })).status, 200, 'and once answered, messages get through');
+    s.pty.write = d => { typed.push(d); write(d); };
     await ok('DELETE', `/api/sessions/${peer.id}`);
     s.agent = 'codex';
     assert.equal((await request('POST', `/api/sessions/${r.id}/input`, { body: { text: 'why?', paste: true, aside: true } })).status, 400, 'ask aside is for Claude Code only');
@@ -2116,6 +2271,39 @@ esac
     down?.fn({ button: 4, preventDefault: () => stopped.push('default'), stopPropagation: () => stopped.push('propagation') });
     assert.deepEqual([down?.capture, stopped], [true, ['default', 'propagation']], 'the forward mouse button never reaches the pane under the pointer, which would record it before going forward');
     assert.ok(!/accent|#[0-9a-f]{3,6}\b/i.test(fs.readFileSync(new URL('./public/app.css', import.meta.url), 'utf8').match(/\.nav-history[^\n]*/g).join('')), 'the buttons use the existing tokens, no pink');
+  }
+  if (process.platform === 'darwin') {
+    // Only macOS privacy (EPERM in a protected folder) gets the "macOS is blocking Relay" message; other errors stay as they are
+    const home = os.homedir();
+    assert.deepEqual([
+      macBlocked({ code: 'EPERM', path: path.join(home, 'Desktop', '.agent-desk', 'shots') }),
+      macBlocked({ code: 'EPERM', path: path.join(home, 'Downloads') }),
+      macBlocked({ code: 'EPERM', path: path.join(home, 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'p') }),
+      macBlocked({ code: 'EPERM', path: '/Volumes/USB/p' }),
+    ], [true, true, true, true], 'EPERM in Desktop, Downloads, iCloud Drive or a removable drive is macOS privacy');
+    assert.deepEqual([
+      macBlocked({ code: 'EACCES', path: path.join(home, 'Desktop', 'p') }),
+      macBlocked({ code: 'EPERM', path: path.join(tmp, 'p') }),
+      macBlocked({ code: 'EPERM', path: path.join(home, 'Desktopper') }),
+      macBlocked({ code: 'ENOENT', path: path.join(home, 'Documents') }),
+    ], [false, false, false, false], 'plain permissions, other folders and other errors are not');
+    const shotsDir = path.join(repo, '.agent-desk', 'shots');
+    fs.mkdirSync(shotsDir, { recursive: true });
+    fs.chmodSync(shotsDir, 0o000);
+    try {
+      const r = await request('GET', `/api/shots?project=${encodeURIComponent(repo)}`);
+      assert.deepEqual([r.body.blocked, /^EACCES/.test(r.body.error)], [undefined, true], 'a folder that is just chmod 000 keeps its normal error');
+      assert.equal(await warnIfBlocked(shotsDir), false, 'and opening a pane there warns about nothing');
+    } finally {
+      fs.chmodSync(shotsDir, 0o755);
+    }
+    const ui = fs.readFileSync(new URL('./public/js/ui.js', import.meta.url), 'utf8');
+    const once = new Function('toast', 'api', 'on', `${ui.match(/\nconst blockedShown[^]*?\non\('mac-blocked'.*\n/)[0].replace(/^export /m, '')}; return { macBlocked, quiet };`);
+    const shown = [];
+    const { macBlocked: showBlocked, quiet } = once((...a) => shown.push(a), () => {}, () => {});
+    showBlocked('/d', 'blocked /d');
+    showBlocked('/d', 'blocked /d');
+    assert.deepEqual([shown.length, shown[0][2].label, quiet.has('blocked /d')], [1, 'Open Settings', true], 'one warning per folder, with the Settings button; later errors with that text stay quiet');
   }
   console.log('All checks passed');
 } finally {

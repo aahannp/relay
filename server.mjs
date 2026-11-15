@@ -55,7 +55,7 @@ function sameSite(req) {
   return !origin || LOCAL.has(origin.replace(/^https?:\/\//, ''));
 }
 
-const AGENT_ROUTES = new Set(['POST /mcp', 'POST /api/claude-session', 'POST /api/touched', 'POST /api/context', 'POST /api/news', 'POST /api/turn-ended']);
+const AGENT_ROUTES = new Set(['POST /mcp', 'POST /api/claude-session', 'POST /api/touched', 'POST /api/context', 'POST /api/news', 'POST /api/turn-ended', 'POST /api/needs-you']);
 // { kind: 'ui' } for the master token, { kind: 'agent', session } for an agent's token on one of
 // AGENT_ROUTES (header only, never a cookie or ?t=), otherwise null: anywhere else an agent token counts for nothing.
 function auth(req, url) {
@@ -213,6 +213,11 @@ route('POST', '/api/sessions', async ({ req, body }) => {
   return S.info(kind === 'agent' && fromAgent(req) ? await S.launched(s) : s); // you see a pane that dies; an agent is told
 });
 route('DELETE', '/api/sessions/:id', ({ req, params }) => (S.stop(noShell(req, sameProject(req, params.id), 'stop')), {}));
+// You hand a Claude lead off to a fresh one (the pane's "Hand off"): answered once the request is typed, the rest comes as 'handoff' events.
+route('POST', '/api/sessions/:id/handoff', async ({ req, params }) => {
+  if (fromAgent(req)) throw fail(403, 'Only you can hand a lead off');
+  return { file: await S.handoff(findSession(params.id)) };
+});
 
 // Claude's SessionStart hook reports the conversation id a pane is on (it changes on /clear). After a compaction
 // its answer, printed by the hook, tells the agent again who it is and what is around it.
@@ -268,6 +273,14 @@ route('POST', '/api/news', ({ req }) => {
   if (!s) throw fail(404, 'Unknown session');
   const text = S.news(s);
   return { raw: text ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: text } }) : '', type: 'application/json' };
+});
+
+// Claude's Notification hook, for a permission prompt only: the pane waits for you (see flag).
+route('POST', '/api/needs-you', ({ req }) => {
+  const s = caller(req);
+  if (!s) throw fail(404, 'Unknown session');
+  S.flag(s);
+  return {};
 });
 
 // Claude's Stop hook: a turn is done. A worker another agent started reports to it, then closes (see turnEnded).
@@ -360,7 +373,9 @@ route('POST', '/api/sessions/:id/input', async ({ req, params, body }) => {
   const text = String(body.text ?? '');
   // Only you can Ask aside (/btw): from an agent, the flag is ignored and deliver refuses a leading /.
   if (!fromAgent(req) && body.paste) {
-    if (!(await S.paste(findSession(params.id), text, { aside: body.aside === true }))) throw fail(409, 'A prompt appeared in the pane; answer it first');
+    const done = await S.paste(findSession(params.id), text, { aside: body.aside === true });
+    if (done === 'typed') throw fail(409, "A prompt appeared in the pane before the Enter: your text is in its input box and goes out with the next Enter. Don't send it again.");
+    if (!done) throw fail(409, 'A prompt appeared in the pane; answer it first');
     return {};
   }
   if (!fromAgent(req)) return (S.send(findSession(params.id), text, body.submit !== false), {});
@@ -370,7 +385,7 @@ route('POST', '/api/sessions/:id/input', async ({ req, params, body }) => {
   let target = closed ? null : sameProject(req, params.id);
   if (target?.id === from.id) throw fail(400, "An agent can't type into itself");
   const recent = recentMessages(from.project);
-  if (target) S.deliver(target, S.sign(from, text));
+  if (target) await deliverOrFail(target, S.sign(from, text));
   else target = await wake(closed, S.sign(from, text));
   if (from.startedBy?.id === target.id) from.told = true; // it told its starter itself, so its turn's report isn't sent too
   sent.set(from.project, [...recent, Date.now()]);
@@ -423,9 +438,15 @@ function logMessage(project, from, to, via) {
 // A worker Relay closed once its turn was done (S.turnEnded) still answers to its old id and its name: a message
 // opens its chat again, as its first message (or reaches it, if it's open again already).
 const closedWorker = (project, to) => db.chats.find(c => c.autoClosed && c.project === project && (c.autoClosed === to || c.name.toLowerCase() === to.toLowerCase()));
+// A message from an agent, typed and sent; its sender hears when a prompt that appeared meanwhile stopped it.
+async function deliverOrFail(to, text) {
+  const done = await S.deliver(to, text);
+  if (done === 'typed') throw fail(409, `A prompt appeared in ${to.name}'s pane before the Enter, so the message wasn't sent. It's in their input box and goes out with the next Enter: don't send it again.`);
+  if (!done) throw fail(409, `A prompt appeared in ${to.name}'s pane, so the message wasn't typed. Try again once the user has answered it.`);
+}
 async function wake(chat, signed) {
   const live = S.chatSessions(chat.id).find(s => !s.exited);
-  if (live) return (S.deliver(live, signed), live);
+  if (live) return (await deliverOrFail(live, signed), live);
   for (const s of S.chatSessions(chat.id)) S.stop(s); // a finished pane gives way
   return reopen(chat, signed);
 }
@@ -451,7 +472,7 @@ route('POST', '/api/messages', async ({ req, body }) => {
   const bucket = target?.project ?? project;
   const recent = recentMessages(bucket);
   if (target) {
-    S.deliver(target, signed);
+    await deliverOrFail(target, signed);
   } else if (closed) {
     target = await wake(closed, signed);
   } else {
@@ -507,7 +528,7 @@ route('POST', '/api/spaces/ask', async ({ req, body }) => {
   const askId = randomUUID().slice(0, 8);
   const signed = `[Question from ${S.plain(from.name)} in space ${spaceName(from.project)} (ask id ${askId})]\n${S.defuse(question)}\n\n` +
     `(Answer briefly with answer_space and ask id ${askId}. Share only what they need; they can't see your chats or board.)`;
-  if (target) S.deliver(target, signed);
+  if (target) await deliverOrFail(target, signed);
   else {
     mayStartAgents(req);
     target = await S.createSession({ project, prompt: signed, startedBy: starter(req) });
@@ -518,7 +539,7 @@ route('POST', '/api/spaces/ask', async ({ req, body }) => {
   bus.emit('event', { type: 'agent-message', from: `${from.name} (${spaceName(from.project)})`, to: target.name, ...logMessage(project, from, target, 'ask_space') });
   return { askId, deliveredTo: { name: target.name, space: path.basename(project), started: !agents.includes(target) } };
 });
-route('POST', '/api/spaces/answer', ({ req, body }) => {
+route('POST', '/api/spaces/answer', async ({ req, body }) => {
   mayMessage(req);
   const from = mayAskSpaces(req);
   const askId = String(body.askId ?? '');
@@ -535,7 +556,7 @@ route('POST', '/api/spaces/answer', ({ req, body }) => {
   // Spaces share summaries, not transcripts.
   const capped = answer.length > 2000 ? `${answer.slice(0, 2000)}... (cut at 2,000 characters)` : answer;
   const recent = recentMessages(to.project);
-  S.deliver(to, `[Answer from space ${spaceName(from.project)} (ask id ${askId})]\n${S.defuse(capped)}`);
+  await deliverOrFail(to, `[Answer from space ${spaceName(from.project)} (ask id ${askId})]\n${S.defuse(capped)}`);
   asks.delete(askId); // once delivered: an asker busy at a prompt can be answered again later
   sent.set(to.project, [...recent, Date.now()]);
   bus.emit('event', { type: 'agent-message', from: `${from.name} (${spaceName(from.project)})`, to: to.name, ...logMessage(to.project, from, to, 'answer_space') });
@@ -590,6 +611,7 @@ route('GET', '/api/update', ({ query }) => U.status(query.get('force') === '1'))
 route('POST', '/api/update/download', ({ req }) => (notFromAgent(req, 'download updates'), U.autoOn() ? U.prepare() : U.download()));
 route('POST', '/api/update/install', ({ req }) => (notFromAgent(req, 'install updates'), U.restart()));
 route('POST', '/api/update/show', () => U.reveal());
+route('POST', '/api/privacy-settings', () => new Promise(resolve => execFile('open', [S.PRIVACY_URL], () => resolve({}))));
 
 // Resources: CPU and memory right now for Relay's whole process tree (in the Mac app that includes Electron's
 // GPU, renderer and helpers), each running pane's tree, and the rest as Relay itself. Settings polls it.
@@ -992,6 +1014,8 @@ async function respond(req, res) {
       }
       return json(200, result ?? {});
     } catch (e) {
+      // One shared place for every route: say what macOS is doing instead of a raw "EPERM: operation not permitted".
+      if (S.macBlocked(e)) return json(e.status || 500, { error: S.blockedText(e.path || 'this folder'), blocked: e.path || 'this folder' });
       return json(e.status || 500, { error: e.message });
     }
   }
