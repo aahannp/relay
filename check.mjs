@@ -35,7 +35,7 @@ process.env.CLAUDE_CONFIG_DIR = path.join(tmp, 'claude-home'); // and never your
 fs.writeFileSync(path.join(tmp, 'data', 'token'), ''); // an empty secret file must never mean "no secret"
 fs.mkdirSync(path.join(tmp, 'data', 'mcp'));
 fs.writeFileSync(path.join(tmp, 'data', 'mcp', 'gone1234.json'), 'left by a crash');
-fs.writeFileSync(path.join(tmp, 'data', 'desk.json'), JSON.stringify({ settings: { agentDefaults: { claude: { model: '', effort: '' }, lead: { model: 'opus', effort: 'high' } } } }));
+fs.writeFileSync(path.join(tmp, 'data', 'desk.json'), JSON.stringify({ projects: [], tasks: [], settings: { agentDefaults: { claude: { model: '', effort: '' }, lead: { model: 'opus', effort: 'high' } } } }));
 let desk = await start({ port: 0, dataDir: path.join(tmp, 'data') });
 assert.deepEqual(db.settings.agentDefaults, { claude: { model: 'sonnet', effort: '', compactWindow: 300_000 }, lead: { model: 'opus', effort: 'high', compactWindow: 400_000 } }, "an old install's workers move to Sonnet; leads stay on Opus");
 // Old settings: asking between folders turned off stays off under its new name
@@ -48,6 +48,45 @@ assert.deepEqual(migrated({ mixFolders: false, openSpaces: [] }, [spA, spB]).ope
 assert.ok(!('mixFolders' in migrated({ mixFolders: true }, [spA])), 'the old switch is gone');
 assert.deepEqual(migrated({ openSpaces: ['/x/a', '/gone', '/x/a', '/x/b'] }, [spA, spB]).openSpaces, ['/x/a', '/x/b'], 'removed folders and repeats drop out');
 assert.ok(desk.token.length >= 32, 'an empty token file is replaced with a real secret');
+// desk.json that can't be read: Relay falls back to desk.json.bak, else starts empty, and keeps the bad file aside.
+// In a child process, so the running server's store (and its file) stay untouched.
+{
+  const storeDir = path.join(tmp, 'store');
+  fs.mkdirSync(storeDir);
+  const deskFile = path.join(storeDir, 'desk.json');
+  const run = code => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
+    `import * as S from ${JSON.stringify(new URL('./lib/store.mjs', import.meta.url).href)}; S.load(${JSON.stringify(storeDir)}); ${code}`], { stdio: ['ignore', 'pipe', 'pipe'] }).toString());
+  const saved = { settings: { theme: 'saved' }, projects: [], tasks: [{ id: 't1' }] };
+  fs.writeFileSync(deskFile, JSON.stringify(saved));
+  run(`S.db.settings.theme = 'changed'; S.changed('settings'); console.log('{}')`);
+  assert.deepEqual([JSON.parse(fs.readFileSync(`${deskFile}.bak`, 'utf8')).settings.theme, JSON.parse(fs.readFileSync(deskFile, 'utf8')).settings.theme], ['saved', 'changed'], 'a save keeps the previous version as desk.json.bak');
+  fs.writeFileSync(deskFile, '{"settings": {"theme": "cha'); // cut short
+  assert.deepEqual(run(`console.log(JSON.stringify([S.db.settings.theme, S.db.tasks]))`), ['saved', saved.tasks], 'a corrupt desk.json loads desk.json.bak');
+  const asideFiles = () => fs.readdirSync(storeDir).filter(f => f.startsWith('desk.json.corrupt-'));
+  assert.equal(asideFiles().length, 1, 'and keeps the corrupt file aside');
+  fs.writeFileSync(deskFile, 'nope');
+  fs.writeFileSync(`${deskFile}.bak`, '{,');
+  assert.deepEqual(run(`console.log(JSON.stringify([S.db.settings.theme, S.db.tasks]))`), [STORE_DEFAULTS.settings.theme, []], 'both corrupt: Relay starts empty instead of failing to start');
+  assert.deepEqual([asideFiles().length, fs.existsSync(deskFile)], [2, false], 'and keeps the corrupt copy, out of the way of the next save');
+  // JSON of the wrong shape is corrupt too: it would load as an empty Relay, and the next save would make it the .bak
+  fs.writeFileSync(`${deskFile}.bak`, JSON.stringify(saved));
+  for (const bad of ['[]', '{}', '{"settings": {}}', '{"projects": [], "tasks": {}}']) {
+    fs.writeFileSync(deskFile, bad);
+    assert.deepEqual(run(`console.log(JSON.stringify(S.db.tasks))`), saved.tasks, `${bad} is corrupt: desk.json.bak loads`);
+  }
+  // A file Relay may not read isn't corrupt: it stays where it is, and Relay stops as before
+  const fails = () => assert.throws(() => run('console.log(1)'), /EACCES|EISDIR/);
+  fs.writeFileSync(deskFile, JSON.stringify(saved));
+  fs.chmodSync(deskFile, 0);
+  const before = asideFiles().length;
+  fails();
+  fs.chmodSync(deskFile, 0o600);
+  assert.deepEqual([asideFiles().length, JSON.parse(fs.readFileSync(deskFile, 'utf8')).tasks], [before, saved.tasks], 'an unreadable desk.json is left alone');
+  fs.rmSync(deskFile);
+  fs.mkdirSync(deskFile);
+  fails();
+  assert.deepEqual([asideFiles().length, fs.statSync(deskFile).isDirectory()], [before, true], 'so is a folder in its place');
+}
 assert.ok(!fs.existsSync(path.join(tmp, 'data', 'mcp', 'gone1234.json')), "a session's MCP file never outlives a restart");
 let SELF = `http://127.0.0.1:${desk.port}`;
 const EVIL = 'https://evil.example';
@@ -317,6 +356,7 @@ try {
   assert.equal(settingsOf(command({ ...base, resume: false }, '', null).args).autoCompactWindow, undefined, 'or your settings.json does');
   assert.match(hooks.PostToolUse[0].hooks[0].command, /\/api\/touched/, 'every file an agent edits is reported');
   assert.match(hooks.Stop[0].hooks[0].command, /\/api\/turn-ended/, 'and the end of each turn');
+  assert.deepEqual([hooks.Notification[0].matcher, /\/api\/needs-you/.test(hooks.Notification[0].hooks[0].command)], ['permission_prompt', true], 'and each permission prompt');
   assert.deepEqual(settingsOf(fresh).attribution, { commit: 'Generated via Relay', pr: 'Generated via Relay' }, 'commits and PRs say Relay made them');
   process.env.CLAUDE_CODE_CHILD_SESSION = '1';
   assert.ok(!('CLAUDE_CODE_CHILD_SESSION' in command({ ...base, resume: false }, '', null).env), "an agent never inherits Claude Code's child-session flag, which turns transcript saving off");
@@ -1053,12 +1093,15 @@ esac
     fs.rmSync(path.join(claudeHome, 'settings.json'));
     s.compactWindow = 200_000; // as if it had started with the lead's window at 200K
     assert.equal(effectiveWindow(s), 200_000, "with the lead's window at 200K, 150K is 75%");
-    for (const [why, ...screen] of [['working a moment ago', '', undefined, 5000], ['you are typing', '', ' hello'], ['a spinner is up', '✶ Tempering…'],
-      ['a permission prompt is up', 'Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No\r\n']]) {
+    for (const [why, ...screen] of [['working a moment ago', '', undefined, 5000], ['you are typing', '', ' hello'], ['a spinner is up', '✶ Tempering…']]) {
       await paint(...screen);
       await upkeep();
       assert.ok(!(await compacted()), `over the threshold but ${why}: nothing`);
     }
+    // A permission prompt: Claude Code draws its menu in place of the input box
+    await new Promise(res => s.term.write('\x1b[3J\x1b[2J\x1b[HDo you want to proceed?\r\n ❯ 1. Yes\r\n   2. No\r\n', () => res(s.lastOutputAt = Date.now() - 25_000)));
+    await upkeep();
+    assert.ok(!(await compacted()), 'over the threshold but a permission prompt is up: nothing');
     s.term.write('\x1b[3J\x1b[2J\x1b[H', () => (s.lastOutputAt = Date.now() - 25_000));
     await upkeep();
     assert.ok(!(await compacted()), "a screen it can't read: nothing");
@@ -1445,6 +1488,14 @@ esac
     assert.match(await outputOf(boss.id), /\[Report from Once only [^\]]*\] Once only is done/, 'a turn that moved its task to review still sends its report: the move only announced it');
     assert.ok(!sessions.has(scouty.id) && !sessions.has(tasked.id), 'then the worker closes, freeing its slot');
     assert.ok(sessions.has(kept.id), 'but not one you typed in');
+    const held = await worker('Held');
+    await screenOf(held.id, /FAKE-CLAUDE/, 'started');
+    sessions.get(boss.id).attention = true; // its starter waits at a prompt, so the report can't go in
+    assert.equal((await ended(held, 'Held is done')).status, 200);
+    await new Promise(r => setTimeout(r, 1500));
+    assert.ok(sessions.has(held.id), 'a worker whose report a prompt held up stays open');
+    const bossNews = (await request('POST', '/api/news', { token: sessions.get(boss.id).agentToken })).body?.hookSpecificOutput?.additionalContext ?? '';
+    assert.match(bossNews, new RegExp(`Held's report didn't reach Boss three: a prompt was up\\. Held stays open; read_agent_chat ${held.id}`), 'and its starter hears so');
     const chat = (await ok('GET', '/api/chats')).find(c => c.id === scouty.chatId);
     assert.deepEqual([chat.running, chat.autoClosed], [false, scouty.id], 'its chat stays');
     assert.doesNotMatch((await rpc('tools/call', { name: 'get_agent_diff', arguments: { id: scouty.id } }, asBoss)).result.content[0].text, /No such session/, 'get_agent_diff still finds it by its old id');
@@ -1455,7 +1506,7 @@ esac
     const again = [...sessions.values()].find(s => s.chatId === tasked.chatId);
     await screenOf(again.id, /One more thing/, 'and gets the message');
     assert.equal(db.tasks.find(t => t.id === job.id).sessionId, again.id, 'its task follows it');
-    for (const id of [boss.id, kept.id, woke.to.id, again.id]) await ok('DELETE', `/api/sessions/${id}`);
+    for (const id of [boss.id, kept.id, held.id, woke.to.id, again.id]) await ok('DELETE', `/api/sessions/${id}`);
     db.tasks.splice(db.tasks.indexOf(db.tasks.find(t => t.id === job.id)), 1);
   }
 
@@ -1482,7 +1533,8 @@ esac
     fs.writeFileSync(transcript, [line({ type: 'user', message: { content: 'Go' } }), line({ type: 'assistant', message: { content: [{ type: 'text', text: older }] } }),
       line({ type: 'user', message: { content: 'And?' } }), line({ type: 'assistant', message: { content: [{ type: 'text', text: final }] } })].join('\n'));
     const closes = async id => {
-      sessions.get(boss.id).attention = false; // the fake boss goes quiet and looks like it waits for the user, which holds reports
+      // The fake boss's tty rings its bell when a long report overflows its input line, which looks like a prompt and holds reports
+      Object.defineProperty(sessions.get(boss.id), 'attention', { get: () => false, set() {}, configurable: true });
       assert.equal((await request('POST', '/api/turn-ended', { token: sessions.get(id).agentToken, body: { hook_event_name: 'Stop', last_assistant_message: final } })).status, 200);
       for (let i = 0; i < 60 && sessions.has(id); i++) await new Promise(r => setTimeout(r, 50));
       assert.ok(!sessions.has(id), 'the worker closes after its turn');
@@ -1738,7 +1790,7 @@ esac
   await ok('DELETE', `/api/sessions/${careful.id}`);
   await ok('PATCH', '/api/settings', { agentsAutonomous: true });
 
-  await ok('POST', `/api/sessions/${christieId}/input`, { text: 'Do you want to proceed?  1. Yes  2. No' }); // you can type anything
+  await ok('POST', `/api/sessions/${christieId}/input`, { text: 'Do you want to proceed?  ❯ 1. Yes  2. No' }); // you can type anything
   await screenOf(christieId, /2\. No/, 'a prompt on screen');
   const blocked = await say('Christie', 'Press enter for me');
   assert.equal(blocked.status, 409, 'nothing is typed into a permission prompt');
@@ -1836,7 +1888,7 @@ esac
     await new Promise(res => setTimeout(res, 300));
     assert.deepEqual(typed.splice(0), ['as\x01typed\n', '\r'], 'without the flag, what you type goes as it is');
     // A prompt that shows up while a message waits its turn: the waiting one is dropped, not typed (its Enter would answer it)
-    const showPrompt = () => new Promise(res => s.term.write('\r\n 1. Yes\r\n 2. No\r\n', res));
+    const showPrompt = () => new Promise(res => s.term.write('\r\n ❯ 1. Yes\r\n   2. No\r\n', res));
     const hidePrompt = () => new Promise(res => s.term.write('moved on\r\n'.repeat(30), res)); // it scrolls away
     for (const [how, send] of [['a reply', text => paste(text)], ['a message from an agent', async text => deliver(s, text)]]) {
       let release;
@@ -1875,6 +1927,47 @@ esac
     assert.deepEqual(typed.map(t => t.replace('\x1b[200~', '').slice(0, 14)), ['[Message from ', '\r', '[Message from ', '\r'],
       "an agent's /btw is signed first, so it's no command, and its aside flag is ignored");
     typed.length = 0;
+    // A prompt drawn between the paste and its Enter: no Enter (it would answer the prompt), and the sender hears so
+    s.pty.write = d => { typed.push(d); write(d); if (d.includes('late prompt')) showPrompt(); };
+    const late = await paste('late prompt');
+    assert.deepEqual([late.status, typed.splice(0)], [409, ['\x1b[200~late prompt\x1b[201~']], 'a reply: pasted, then no Enter once a prompt appears');
+    assert.match(late.body.error, /in its input box and goes out with the next Enter\. Don't send it again/, 'and you hear it is in the input box');
+    await hidePrompt();
+    const lateMsg = await fromPeer({ text: 'late prompt' });
+    assert.equal(typed.splice(0).length, 1, "an agent's message: pasted, then no Enter");
+    assert.deepEqual([lateMsg.status, lateMsg.body.error], [409, "A prompt appeared in Replier's pane before the Enter, so the message wasn't sent. It's in their input box and goes out with the next Enter: don't send it again."], 'and its sender is told it is in the input box, not to send it again (a retry would send it twice)');
+    await hidePrompt();
+    // Claude Code's screen: messages, then the input box, where what you paste goes. Its permission menu takes the box's place.
+    const box = text => `${'─'.repeat(60)}\r\n❯ ${text.replace(/\n/g, '\r\n  ')}\r\n${'─'.repeat(60)}\r\n  ⏵⏵ auto mode on\r\n`;
+    const draw = text => new Promise(res => s.term.write(`\x1b[3J\x1b[2J\x1b[H${text}`, res));
+    const menu = 'Do you want to proceed?\r\n ❯ 1. Yes\r\n   2. No\r\n\r\n Esc to cancel\r\n';
+    const inBox = d => d.startsWith('\x1b[200~') && draw(`● Done.\r\n\r\n${box(d.slice(6, -6))}`);
+    await draw(`● Pick one:\r\n ❯ 1. Yes\r\n   2. No\r\n\r\n${box('')}`);
+    s.pty.write = d => { typed.push(d); inBox(d); };
+    assert.equal((await fromPeer({ text: 'hi' })).status, 200, "the option lines in an agent's own message, above its input box, are no prompt");
+    assert.equal(typed.splice(0).at(-1), '\r', 'so the message is sent');
+    assert.equal((await fromPeer({ text: 'Which?\n❯ 1. Yes\n2. No' })).status, 200, 'a message with the option lines in it is typed');
+    assert.equal(typed.splice(0).at(-1), '\r', 'and sent: the lines it pasted into the input box are no prompt');
+    assert.equal((await paste('Which?\n❯ 1. Yes\n2. No')).status, 200, 'a reply with them too');
+    assert.equal(typed.splice(0).at(-1), '\r');
+    s.pty.write = d => { typed.push(d); inBox(d) && draw(`● Done.\r\n\r\n${menu}`); };
+    assert.equal((await fromPeer({ text: 'Which?\n❯ 1. Yes\n2. No' })).status, 409, 'a real menu drawn between the paste and the Enter still stops the Enter');
+    assert.equal(typed.splice(0).length, 1, 'only the paste went');
+    assert.equal((await fromPeer({ text: 'hi' })).status, 409, 'and the menu on screen stops the next message');
+    assert.deepEqual(typed, []);
+    s.pty.write = d => { typed.push(d); inBox(d); };
+    await draw(`● Done.\r\n\r\n${box('')}`);
+    assert.equal((await request('POST', '/api/needs-you', { token: s.agentToken })).status, 200);
+    assert.equal((await fromPeer({ text: 'hi' })).status, 409, "Claude Code's permission notification (its hook) holds messages too, whatever the screen shows");
+    assert.deepEqual(typed, []);
+    // A notification that lands after the prompt was answered doesn't hold the pane for good: its next turn activity clears it
+    for (const hook of ['/api/turn-ended', '/api/news']) {
+      s.attention = true;
+      assert.equal((await request('POST', hook, { token: s.agentToken, body: {} })).status, 200);
+      assert.equal(s.attention, false, `${hook} (no prompt can be up then) clears "needs you"`);
+    }
+    assert.equal((await fromPeer({ text: 'hi' })).status, 200, 'and once answered, messages get through');
+    s.pty.write = d => { typed.push(d); write(d); };
     await ok('DELETE', `/api/sessions/${peer.id}`);
     s.agent = 'codex';
     assert.equal((await request('POST', `/api/sessions/${r.id}/input`, { body: { text: 'why?', paste: true, aside: true } })).status, 400, 'ask aside is for Claude Code only');
