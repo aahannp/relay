@@ -587,7 +587,7 @@ let planLimits = {};
 function renderLimits(p) {
   const chips = p.session.kind === 'shell' ? [] : limitChips(planLimits);
   p.limitsEl.hidden = !chips.length;
-  p.limitsEl.replaceChildren(...chips.map(c => h('span', { class: `limit ${c.level}`, role: 'group', tabindex: 0, title: c.label, 'aria-label': c.label },
+  p.limitsEl.replaceChildren(...chips.map(c => h('span', { class: `limit limit-${c.key} ${c.level}`, role: 'group', tabindex: 0, title: c.label, 'aria-label': c.label },
     h('span', { class: 'limit-name' }, c.short), h('span', { class: 'limit-pct' }, ` ${c.pct}%`), c.text && h('span', { class: 'limit-when' }, ` · ${c.text}`))));
 }
 const renderAllLimits = () => panes.forEach(p => p.kind === 'term' && renderLimits(p));

@@ -375,6 +375,8 @@ try {
     assert.match(five.label, /^5-hour limit: 42% used, resets \w{3} 15 Nov 12:10$/, 'the exact reset time for the tooltip and aria-label');
     assert.deepEqual([81, 80, 100].map(used => limitChips({ session: at(130, { used }) }, t0)[0].level), ['warn', '', 'bad'], 'amber over 80%, red at 100%');
     assert.match(limitChips({ session: at(130, { used: 100 }) }, t0)[0].text, /^limit reached · resets 12:10$/);
+    assert.equal(limitChips({ weekly: at(50 * 60, { used: 100 }) }, t0)[0].text, `limit reached · resets ${resetLabel(t0 + 50 * 3_600_000, t0)}`, 'a reset over a day away keeps its weekday');
+    assert.match(limitChips({ session: at(130) }, t0)[0].label, /^5-hour/);
     assert.deepEqual([limitChips({}, t0), limitChips({ session: at(-5) }, t0), limitChips({ session: { used: 5 } }, t0)], [[], [], []], 'no data, a passed window, or no reset time: no chip');
   }
 
@@ -1035,9 +1037,11 @@ esac
     noteLimits({ five_hour: { used_percentage: 'lots' }, seven_day: null });
     assert.equal(limitEvents.length, 1, 'unchanged, missing or bad values: no new event, nothing lost');
     noteLimits({ five_hour: { used_percentage: 120, resets_at: 1_800_000_100 } });
-    assert.deepEqual(usageLimits(), { session: { used: 100, resetsAt: 1_800_000_100_000 } }, 'one window missing is left out; over 100% is capped');
+    assert.deepEqual(usageLimits(), { session: { used: 100, resetsAt: 1_800_000_100_000 }, weekly: both.weekly }, 'a report with one window leaves the other as it was; over 100% is capped');
     noteLimits({ seven_day: { used_percentage: -5 } });
-    assert.deepEqual(usageLimits(), { weekly: { used: 0 } }, 'no reset time: just the percentage');
+    assert.deepEqual(usageLimits(), { session: { used: 100, resetsAt: 1_800_000_100_000 }, weekly: { used: 0 } }, 'no reset time: just the percentage');
+    noteLimits({ five_hour: { used_percentage: null, resets_at: 1_800_000_200 }, seven_day: { used_percentage: '' } });
+    assert.deepEqual(usageLimits(), { session: { used: 100, resetsAt: 1_800_000_100_000 }, weekly: { used: 0 } }, 'a null or empty percentage is no data, not 0%');
     bus.off('event', onLimits);
     fs.appendFileSync(transcript, `${line({ type: 'assistant', message: { content: [{ type: 'text', text: 'Planning the login work' }], usage: { input_tokens: 0, cache_read_input_tokens: 150_000, cache_creation_input_tokens: 0 } } })}\n`);
     await ok('PATCH', '/api/settings', { leadUpkeep: UP });

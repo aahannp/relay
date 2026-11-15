@@ -265,7 +265,7 @@ export function limitChips(limits, now = Date.now()) {
     const reached = pct >= 100;
     return [{
       key, short, pct, level: reached ? 'bad' : pct > 80 ? 'warn' : '', when,
-      text: reached ? `limit reached · resets ${new Date(w.resetsAt).toLocaleTimeString('en-GB', clock)}` : when,
+      text: reached ? `limit reached · resets ${w.resetsAt - now < 864e5 ? new Date(w.resetsAt).toLocaleTimeString('en-GB', clock) : when}` : when,
       label: `${long} limit: ${pct}% used, resets ${full}`,
     }];
   });

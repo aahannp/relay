@@ -386,7 +386,7 @@ textarea.input { resize: vertical; min-height: 84px; line-height: 1.55; }
 .limit.warn { color: var(--warn); } .limit.bad { color: var(--bad); }
 .limit.warn .limit-name, .limit.bad .limit-name { color: inherit; opacity: 1; }
 @container (max-width: 640px) { .limit-pct { display: none; } }
-@container (max-width: 520px) { .limit:nth-child(2) { display: none; } }
+@container (max-width: 520px) { .limit-weekly { display: none; } }
 @container (max-width: 440px) { .limits { display: none; } }
 .pane-body { position: relative; flex: 1; min-height: 0; display: flex; }
 /* content-box: xterm's fit addon reads this box's CSS width and height as the space to fill, so the padding must not be

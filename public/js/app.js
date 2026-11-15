@@ -96,6 +96,7 @@ function listen() {
   events.onopen = () => {
     live = true;
     Object.keys(loaders).forEach(refresh); // after a reconnect, catch up on everything
+    api('GET', '/api/limits').then(limits => emit('limits', { limits }), () => {});
   };
   events.onerror = () => { live = false; renderStatus(); };
 }
