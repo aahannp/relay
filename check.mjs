@@ -1,7 +1,7 @@
 // Smoke check for the server: security, a shell with command blocks, the task board, worktree review and
 // merge, and the MCP tools. Uses a throwaway data folder and git repo, never your real ones.
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -11,7 +11,7 @@ import { start, processTree } from './server.mjs';
 import { createWorktree } from './lib/git.mjs';
 import { db, bus, migrate, DEFAULTS as STORE_DEFAULTS } from './lib/store.mjs';
 import * as T from './lib/team.mjs';
-import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose, deliver, noteLimits, usageLimits, HANDOFF, macBlocked, warnIfBlocked } from './lib/sessions.mjs';
+import { command, board, sessions, upkeep, effectiveWindow, claudeTheme, contrast, createSession, prose, deliver, noteLimits, usageLimits, HANDOFF, macBlocked, blockedNow, blockedPane, resetGrant } from './lib/sessions.mjs';
 import { THEMES } from './public/js/themes.js';
 import { transcriptContext } from './lib/transcripts.mjs';
 import { priceReply } from './lib/usage.mjs';
@@ -2374,17 +2374,34 @@ app.whenReady().then(async () => {
     try {
       const r = await request('GET', `/api/shots?project=${encodeURIComponent(repo)}`);
       assert.deepEqual([r.body.blocked, /^EACCES/.test(r.body.error)], [undefined, true], 'a folder that is just chmod 000 keeps its normal error');
-      assert.equal(await warnIfBlocked(shotsDir), false, 'and opening a pane there warns about nothing');
+      assert.equal(blockedNow(shotsDir), false, 'and a pane there starts as usual');
     } finally {
       fs.chmodSync(shotsDir, 0o755);
     }
+    // A pane start asks whether macOS refuses the folder now; nothing below reads the real Desktop.
+    const desktopDir = path.join(home, 'Desktop', 'p');
+    const denied = () => 'ls: p: Operation not permitted\n';
+    assert.deepEqual([blockedNow(desktopDir, denied), blockedNow(desktopDir, () => ''), blockedNow(path.join(tmp, 'p'), denied)],
+      [process.platform === 'darwin', false, false], 'blocked is a protected folder that ls may not read; a readable one, or any other folder, is not');
+    const [sh, shArgs] = blockedPane(desktopDir);
+    const stub = spawnSync(sh, shArgs, { encoding: 'utf8' });
+    assert.deepEqual([stub.status, stub.stdout.includes(`macOS is blocking Relay from ${desktopDir}`), stub.stdout.includes('Then press Resume.')], [1, true, true],
+      'a pane in a blocked folder prints the reason and the fix and exits 1, instead of an agent dying with a bare EPERM');
+    const resets = [];
+    const fakeRun = (...a) => resets.push(a);
+    assert.deepEqual([resetGrant(desktopDir, 'com.x', fakeRun), resetGrant('/Volumes/USB/p', 'com.x', fakeRun), resetGrant(desktopDir, '', fakeRun), resetGrant(undefined, 'com.x', fakeRun)],
+      [true, false, false, false], 'Ask macOS again has something to forget only for Desktop, Documents or Downloads, inside the Mac app');
+    assert.deepEqual(resets.map(a => a[1]), [['reset', 'SystemPolicyDesktopFolder', 'com.x']], 'and it forgets only that kind of folder, only for this app');
     const ui = fs.readFileSync(new URL('./public/js/ui.js', import.meta.url), 'utf8');
     const once = new Function('toast', 'api', 'on', `${ui.match(/\nconst blockedShown[^]*?\non\('mac-blocked'.*\n/)[0].replace(/^export /m, '')}; return { macBlocked, quiet };`);
     const shown = [];
-    const { macBlocked: showBlocked, quiet } = once((...a) => shown.push(a), () => {}, () => {});
+    const posts = [];
+    const { macBlocked: showBlocked, quiet } = once((...a) => shown.push(a), (...a) => posts.push(a), () => {});
     showBlocked('/d', 'blocked /d');
     showBlocked('/d', 'blocked /d');
-    assert.deepEqual([shown.length, shown[0][2].label, quiet.has('blocked /d')], [1, 'Open Settings', true], 'one warning per folder, with the Settings button; later errors with that text stay quiet');
+    shown[0][2].onClick();
+    assert.deepEqual([shown.length, shown[0][2].label, quiet.has('blocked /d'), posts[0]], [1, 'Ask macOS again', true, ['POST', '/api/privacy-settings', { folder: '/d' }]],
+      'one warning per folder while it is up, whose button asks macOS again for that folder; later errors with that text stay quiet');
   }
   console.log('All checks passed');
 } finally {
