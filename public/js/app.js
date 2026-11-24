@@ -571,7 +571,12 @@ document.addEventListener('keydown', e => {
   else if (mod && !e.shiftKey && !e.altKey && key === 'b') { e.preventDefault(); e.stopPropagation(); toggleSidebar(); }
   // ⌘[ and ⌘] (not Ctrl: Ctrl+[ is Escape in a terminal), except in the editor, where they indent.
   else if (e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && (key === '[' || key === ']') && !e.target.closest?.('.monaco-editor')) { e.preventDefault(); e.stopPropagation(); travel(key === '[' ? -1 : 1); }
-  else if (mod && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) { e.preventDefault(); e.stopPropagation(); showView(VIEWS[Number(e.key) - 1].id); }
+  // ⌘1-9 switch views; Ctrl+1-9 switch to that agent among the ones showing in the open space(s).
+  else if (!e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key) && (e.metaKey !== e.ctrlKey)) {
+    e.preventDefault(); e.stopPropagation();
+    if (e.metaKey) showView(VIEWS[Number(e.key) - 1].id);
+    else actions.focusNthAgent(Number(e.key) - 1);
+  }
 }, true);
 
 command('New task', () => { showView('board'); actions.newTask?.(); }, { icon: 'plus' });

@@ -508,6 +508,7 @@ function terminalPane(s, parent) {
   });
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
+  term.loadAddon(new WebLinksAddon.WebLinksAddon()); // plain URLs open via window.open, which the app sends to the default browser
 
   const dot = h('span', { class: 'dot' });
   const stateText = h('span', {}, 'Starting');
@@ -792,6 +793,10 @@ function focusSession(id) {
   setTimeout(() => p.term.focus());
 }
 actions.focusSession = focusSession;
+actions.focusNthAgent = n => {
+  const id = actions.paneOrder().filter(id => !hidden.has(id) && shows(panes.get(id)?.session.project))[n];
+  if (id) focusSession(id);
+};
 
 // Type into a session's terminal (voice and screenshots use this). Enter is sent separately.
 actions.typeInto = (id, text, submit = false) => {

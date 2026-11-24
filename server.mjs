@@ -29,6 +29,7 @@ const VENDOR = {
   'xterm.css': '@xterm/xterm/css/xterm.css',
   'addon-fit.js': '@xterm/addon-fit/lib/addon-fit.js',
   'addon-webgl.js': '@xterm/addon-webgl/lib/addon-webgl.js',
+  'addon-web-links.js': '@xterm/addon-web-links/lib/addon-web-links.js',
   'addon-serialize.js': '@xterm/addon-serialize/lib/addon-serialize.js',
 };
 const STATUSES = ['todo', 'doing', 'review', 'done'];
