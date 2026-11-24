@@ -612,7 +612,14 @@ route('GET', '/api/update', ({ query }) => U.status(query.get('force') === '1'))
 route('POST', '/api/update/download', ({ req }) => (notFromAgent(req, 'download updates'), U.autoOn() ? U.prepare() : U.download()));
 route('POST', '/api/update/install', ({ req }) => (notFromAgent(req, 'install updates'), U.restart()));
 route('POST', '/api/update/show', () => U.reveal());
-route('POST', '/api/privacy-settings', () => new Promise(resolve => execFile('open', [S.PRIVACY_URL], () => resolve({}))));
+// "Ask macOS again" on the blocked-folder notice: forget macOS's answer, then read the folder so its Allow prompt
+// comes up. Where there is nothing to forget, it opens the Settings pane instead.
+route('POST', '/api/privacy-settings', ({ req, body }) => {
+  notFromAgent(req, 'change privacy settings');
+  if (!S.resetGrant(body?.folder)) return new Promise(resolve => execFile('open', [S.PRIVACY_URL], () => resolve({})));
+  fs.promises.readdir(body.folder).catch(() => {}); // the answer is the user's; a refusal shows on the next start
+  return {};
+});
 
 // Resources: CPU and memory right now for Relay's whole process tree (in the Mac app that includes Electron's
 // GPU, renderer and helpers), each running pane's tree, and the rest as Relay itself. Settings polls it.

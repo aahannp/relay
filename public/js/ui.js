@@ -111,13 +111,15 @@ export function icon(name, size = 16) {
   return span;
 }
 
-// macOS blocking a folder shows one toast per folder with the way to fix it; the same error from later reads stays quiet.
-const blockedShown = new Set();
+// macOS blocking a folder shows a toast with the way to fix it, one per folder while that toast is up; the same
+// error from other reads stays quiet. Once the toast is gone, the next blocked start says so again.
+const blockedShown = new Map(); // folder → when its toast went up
 const quiet = new Set();
 export function macBlocked(folder, text) {
-  if (blockedShown.has(folder)) return;
-  blockedShown.add(folder);
-  toast(text, 'error', { label: 'Open Settings', onClick: () => api('POST', '/api/privacy-settings'), ms: 20000 });
+  if (Date.now() - (blockedShown.get(folder) ?? 0) < 20000) return;
+  blockedShown.set(folder, Date.now());
+  quiet.delete(text); // or toast() would swallow the repeat
+  toast(text, 'error', { label: 'Ask macOS again', onClick: () => api('POST', '/api/privacy-settings', { folder }), ms: 20000 });
   quiet.add(text);
 }
 on('mac-blocked', e => macBlocked(e.folder, e.text));
