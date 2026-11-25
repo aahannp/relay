@@ -16,7 +16,7 @@ import { THEMES } from './public/js/themes.js';
 import { transcriptContext } from './lib/transcripts.mjs';
 import { priceReply } from './lib/usage.mjs';
 import * as U from './lib/update.mjs';
-import { parseMarkdown, meterView, quoteReply, resetLabel, limitChips } from './public/js/ui.js';
+import { parseMarkdown, meterView, quoteReply, resetLabel, limitChips, openLink } from './public/js/ui.js';
 import { stripDeskCookies } from './lib/cookies.mjs';
 import { groupsOf } from './public/js/artifacts.js';
 import { randomUUID, createHash } from 'node:crypto';
@@ -1885,6 +1885,13 @@ esac
 
   // Replying to a selection in a pane: the text quoted, then your question, pasted whole and sent, never into a prompt
   {
+    {
+      const had = 'window' in globalThis, was = globalThis.window, opened = [];
+      globalThis.window = { open: (...a) => { opened.push(a); return null; } };
+      for (const uri of ['https://github.com/aahannp/relay/pull/138', 'javascript:alert(1)', 'file:///etc/passwd', 'HTTP://x.test/a']) openLink(null, uri);
+      if (had) globalThis.window = was; else delete globalThis.window;
+      assert.deepEqual(opened, [['https://github.com/aahannp/relay/pull/138', '_blank', 'noopener'], ['HTTP://x.test/a', '_blank', 'noopener']], "a pane's link opens with its address (never a blank window first), and only http(s)");
+    }
     assert.equal(quoteReply('first  \r\nsecond\n\n  third \n\n', ' Why? '), '> first\n> second\n>\n>   third\n\nWhy?', 'each line quoted, trailing spaces gone, then a blank line and the question');
     assert.equal(quoteReply('y'.repeat(2500), 'q'), `> ${'y'.repeat(2000)}\n> (1 more line cut)\n\nq`, 'a long selection keeps its first 2,000 characters');
     assert.equal(quoteReply(`${'z'.repeat(1999)}\nb\nc\nd`, 'q'), `> ${'z'.repeat(1999)}\n> (3 more lines cut)\n\nq`, 'and says how many lines it cut');
