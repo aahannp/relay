@@ -363,6 +363,18 @@ try {
   assert.deepEqual([hooks.Notification[0].matcher, /\/api\/needs-you/.test(hooks.Notification[0].hooks[0].command)], ['permission_prompt', true], 'and each permission prompt');
   assert.deepEqual(settingsOf(fresh).attribution, { commit: 'Generated via Relay', pr: 'Generated via Relay' }, 'commits and PRs say Relay made them');
   process.env.CLAUDE_CODE_CHILD_SESSION = '1';
+  {
+    const was = { ...process.env };
+    for (const k of ['LC_ALL', 'LC_CTYPE', 'LANG']) delete process.env[k];
+    const bare = command({ ...base, resume: false }, '', null).env;
+    process.env.LC_ALL = 'C';
+    const forced = command({ ...base, resume: false }, '', null).env;
+    process.env.LC_ALL = 'de_DE.UTF-8';
+    const mine = command({ ...base, resume: false }, '', null).env;
+    Object.assign(process.env, was);
+    for (const k of ['LC_ALL', 'LC_CTYPE', 'LANG']) if (!(k in was)) delete process.env[k];
+    assert.deepEqual([bare.LC_CTYPE, forced.LC_CTYPE, 'LC_ALL' in forced, mine.LC_ALL, mine.LC_CTYPE], ['en_US.UTF-8', 'en_US.UTF-8', false, 'de_DE.UTF-8', undefined], 'panes get a UTF-8 locale when the app has none, and keep yours when it has one');
+  }
   assert.ok(!('CLAUDE_CODE_CHILD_SESSION' in command({ ...base, resume: false }, '', null).env), "an agent never inherits Claude Code's child-session flag, which turns transcript saving off");
   delete process.env.CLAUDE_CODE_CHILD_SESSION;
   fs.writeFileSync(path.join(claudeHome, 'settings.json'), JSON.stringify({ statusLine: { type: 'command', command: 'cat # yours', padding: 1 } }));
