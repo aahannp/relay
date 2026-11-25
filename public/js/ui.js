@@ -304,6 +304,12 @@ export function ago(t) {
   return new Date(t).toLocaleDateString();
 }
 
+// A link clicked in an agent's pane. xterm's own handlers open a blank window and set its address afterwards; the
+// Mac app refuses a blank window, so nothing opened. Giving window.open the address reaches the default browser.
+export function openLink(_event, uri) {
+  if (/^https?:\/\//i.test(uri)) window.open(uri, '_blank', 'noopener');
+}
+
 // Falls back to a selected textarea when the page isn't given clipboard access (the Mac app may not be).
 export async function copy(text, said = 'Copied') {
   try {

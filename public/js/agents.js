@@ -1,5 +1,5 @@
 // Agents view: every agent, shell and browser pane for the project, tiled in a grid of real terminals.
-import { state, api, h, icon, avatar, on, emit, toast, guard, actions, command, commands, menu, askText, modal, confirmDialog, agentLabel, shortBranch, baseName, copy, quoteReply, chatTitle, meterView, limitChips, openSpaces, spaceSummary, DRAG, MONO, STATUS_LABEL } from './ui.js';
+import { state, api, h, icon, avatar, on, emit, toast, guard, actions, command, commands, menu, askText, modal, confirmDialog, agentLabel, shortBranch, baseName, copy, openLink, quoteReply, chatTitle, meterView, limitChips, openSpaces, spaceSummary, DRAG, MONO, STATUS_LABEL } from './ui.js';
 
 const panes = new Map(); // id -> pane (a session's terminal, or a browser)
 const seen = new Map(); // session id -> last status we told you about
@@ -505,10 +505,11 @@ function terminalPane(s, parent) {
   const term = new Terminal({
     fontFamily: MONO, fontSize: Number(state.settings.fontSize) || 13, lineHeight: 1.2, cursorBlink: true,
     allowProposedApi: true, macOptionIsMeta: true, scrollback: 5000, theme: state.termTheme, minimumContrastRatio: contrast(),
+    linkHandler: { activate: openLink }, // links the program marks itself, such as Claude Code's PR links
   });
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
-  term.loadAddon(new WebLinksAddon.WebLinksAddon()); // plain URLs open via window.open, which the app sends to the default browser
+  term.loadAddon(new WebLinksAddon.WebLinksAddon(openLink)); // plain URLs in the text
 
   const dot = h('span', { class: 'dot' });
   const stateText = h('span', {}, 'Starting');
